@@ -1,0 +1,11 @@
+[Unit]
+Description=asm-httpd
+After=network.target
+
+[Service]
+ExecStart=/opt/asm-httpd/asmhttpd -p 8080 -d /opt/asm-httpd/www
+User=www-data
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
