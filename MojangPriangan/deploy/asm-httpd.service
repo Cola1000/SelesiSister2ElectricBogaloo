@@ -1,11 +1,13 @@
+# deploy/asm-httpd.service
 [Unit]
-Description=asm-httpd
+Description=asmhttpd (NASM) demo
 After=network.target
 
 [Service]
-ExecStart=/opt/asm-httpd/asmhttpd -p 8080 -d /opt/asm-httpd/www
+ExecStart=/opt/asmhttpd/asmhttpd -p 8080 -d /opt/asmhttpd/www
 User=www-data
 Restart=always
+AmbientCapabilities=CAP_NET_BIND_SERVICE
 
 [Install]
 WantedBy=multi-user.target

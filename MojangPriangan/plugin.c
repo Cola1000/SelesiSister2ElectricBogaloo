@@ -1,57 +1,45 @@
-#include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
 #include "plugin_api.h"
-
-static int kv_get(const char* q, const char* key, int* out){
-    if(!q) return 0;
-    size_t klen = strlen(key);
-    const char* p = q;
-    while(p && *p){
-        const char* amp = strchr(p, '&');
-        size_t seglen = amp ? (size_t)(amp - p) : strlen(p);
-        if(seglen > klen+1 && !strncmp(p, key, klen) && p[klen]=='='){
-            *out = atoi(p + klen + 1);
-            return 1;
-        }
-        p = amp ? amp+1 : NULL;
-    }
-    return 0;
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+static const char* CT_JSON = "Content-Type: application/json\r\n";
+static const char* CT_TEXT = "Content-Type: text/plain\r\n";
+static int starts_with(const char* s, const char* p){ return strncmp(s,p,strlen(p))==0; }
+static int url_param_int(const char* q, const char* key, int* out){
+  if(!q||!key) return 0;
+  size_t k = strlen(key);
+  const char* p = q;
+  while(p && *p){
+    if(strncmp(p,key,k)==0 && p[k]=='='){ *out = atoi(p+k+1); return 1; }
+    p = strchr(p,'&'); if(p) ++p;
+  }
+  return 0;
 }
-
 int plugin_dispatch(const char* method,
                     const char* path,
                     const char* query,
                     const char* body,
-                    int body_len,
+                    int   body_len,
                     char* out,
-                    int out_cap,
-                    int* out_status,
+                    int   out_cap,
+                    int*  out_status,
                     const char** out_ct){
-    (void)body; (void)body_len;
-    *out_status = 200; *out_ct = "text/plain";
-
-    if(!strncmp(path, "/dyn/hello", 10)){
-        const char* msg = "Ngalegaan kakawasan ti C plugin!";
-        int n = (int)strlen(msg);
-        if(n>out_cap) return -1;
-        memcpy(out, msg, n);
-        return n;
-    }
-    else if(!strncmp(path, "/dyn/add", 8)){
-        int a=0,b=0;
-        if(!kv_get(query, "a", &a) || !kv_get(query, "b", &b)){
-            const char* msg = "missing a or b";
-            *out_status = 400;
-            int n=(int)strlen(msg); if(n>out_cap) return -1; memcpy(out,msg,n); return n;
-        }
-        int sum = a+b;
-        int n = snprintf(out, out_cap, "{\"a\":%d,\"b\":%d,\"sum\":%d}", a,b,sum);
-        *out_ct = "application/json";
-        return (n<0||n>out_cap)?-1:n;
-    }
-
-    *out_status = 404;
-    const char* msg = "not found";
-    int n=(int)strlen(msg); if(n>out_cap) return -1; memcpy(out,msg,n); return n;
+  (void)method; (void)body; (void)body_len;
+  if(!path||!out||out_cap<=0) return -1;
+  if(starts_with(path, "/dyn/hello")){
+    int n = snprintf(out, out_cap, "Hello from C plugin!\\n");
+    if(out_ct) *out_ct = CT_TEXT;
+    if(out_status) *out_status = 200;
+    return n;
+  }
+  if(starts_with(path, "/dyn/add")){
+    int a=0,b=0; url_param_int(query,"a",&a); url_param_int(query,"b",&b);
+    int n = snprintf(out, out_cap, "{\"a\":%d,\"b\":%d,\"sum\":%d}\n", a,b,a+b);
+    if(out_ct) *out_ct = CT_JSON;
+    if(out_status) *out_status = 200;
+    return n;
+  }
+  if(out_status) *out_status = 404;
+  if(out_ct) *out_ct = CT_TEXT;
+  return snprintf(out, out_cap, "dynamic route not found\\n");
 }

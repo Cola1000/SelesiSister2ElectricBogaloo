@@ -1,18 +1,18 @@
+# Makefile for glibc-based asmhttpd
 CC=gcc
-NASM=nasm
-CFLAGS=-O2 -fno-pie -no-pie
+CFLAGS=-O2 -fno-pie
 LDFLAGS=-no-pie
 
 all: asmhttpd
 
 asmhttpd: server.o plugin.o
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(LDFLAGS) -o $@ server.o plugin.o
 
 server.o: server.asm
-	$(NASM) -f elf64 -g -F dwarf $< -o $@
+	nasm -f elf64 -g -F dwarf server.asm -o server.o
 
 plugin.o: plugin.c plugin_api.h
-	$(CC) -c -O2 -fno-pie -no-pie plugin.c -o plugin.o
+	$(CC) $(CFLAGS) -c plugin.c -o plugin.o
 
 clean:
-	rm -f *.o asmhttpd
+	rm -f asmhttpd *.o
