@@ -1,817 +1,939 @@
-; server.asm — asmhttpd (x86-64 Linux, NASM, System V ABI, glibc calls)
-; Build: nasm -f elf64 -g -F dwarf server.asm -o server.o
-; Link : gcc -no-pie -O2 -o asmhttpd server.o plugin.o
-; Run  : ./asmhttpd -p 8080 -d ./www
+; =============================================================================
+; asmhttpd: A simple HTTP server in x86-64 Assembly for Linux
+;
+; Features:
+; - Listens on a specified port (-p)
+; - Serves files from a document root (-d)
+; - Forks a new process for each request
+; - Handles GET, POST, PUT, DELETE methods
+; - Simple routing for /hello and /auth
+; - Basic Authentication for /auth
+; - Integration with a C plugin for dynamic routes (/dyn/*)
+; =============================================================================
 
-        default rel
-        global  main
+%define SYSCALL_READ        0
+%define SYSCALL_WRITE       1
+%define SYSCALL_OPEN        2
+%define SYSCALL_CLOSE       3
+%define SYSCALL_STAT        4
+%define SYSCALL_FSTAT       5
+%define SYSCALL_LSEEK       8
+%define SYSCALL_MMAP        9
+%define SYSCALL_EXIT        60
+%define SYSCALL_FORK        57
+%define SYSCALL_SOCKET      41
+%define SYSCALL_BIND        49
+%define SYSCALL_LISTEN      50
+%define SYSCALL_ACCEPT      43
+%define SYSCALL_SENDFile    40
+%define SYSCALL_SETSOCKOPT  54
 
-        extern  socket, bind, listen, accept, fork, read, write, close, open, lseek, exit
-        extern  strlen, memcpy, strcmp, strncmp, strstr
-        extern  htons
-        extern  plugin_dispatch
+%define AF_INET     2
+%define SOCK_STREAM 1
+%define PROTO_TCP   6
 
-%define AF_INET      2
-%define SOCK_STREAM  1
-%define INADDR_ANY   0
-%define O_RDONLY     0
-%define O_WRONLY     1
-%define O_CREAT      64
-%define O_TRUNC      512
-%define SEEK_SET     0
-%define SEEK_END     2
+%define SOL_SOCKET  1
+%define SO_REUSEADDR 2
 
-SECTION .data
-usage_msg:      db 'Usage: ./asmhttpd -p PORT -d DOCROOT',13,10,0
-crlf:           db 13,10,0
-crlfcrlf:       db 13,10,13,10,0
-hdr_200:        db 'HTTP/1.1 200 OK',13,10,0
-hdr_201:        db 'HTTP/1.1 201 Created',13,10,0
-hdr_401:        db 'HTTP/1.1 401 Unauthorized',13,10,'WWW-Authenticate: Basic realm="asmhttpd"',13,10,0
-hdr_404:        db 'HTTP/1.1 404 Not Found',13,10,0
-hdr_405:        db 'HTTP/1.1 405 Method Not Allowed',13,10,0
-hdr_500:        db 'HTTP/1.1 500 Internal Server Error',13,10,0
-ct_text:        db 'Content-Type: text/plain',13,10,0
-ct_html:        db 'Content-Type: text/html',13,10,0
-ct_json:        db 'Content-Type: application/json',13,10,0
-cl_hdr:         db 'Content-Length: ',0
-conn_close:     db 'Connection: close',13,10,0
-server_hdr:     db 'Server: asmhttpd',13,10,0
-basic_prefix:   db 'Authorization: Basic ',0
-basic_good:     db 'YWRtaW46c2VjcmV0',0  ; admin:secret (base64)
-idx_def:        db '/index.html',0
-get_s:          db 'GET',0
-post_s:         db 'POST',0
-put_s:          db 'PUT',0
-delete_s:       db 'DELETE',0
-p_hello:        db '/hello',0
-p_auth:         db '/auth',0
-p_dyn:          db '/dyn',0
-p_dotdot:       db '..',0
-cl_key:         db 'Content-Length:',0
-ext_html:       db '.html',0
-arg_p:          db '-p',0
-arg_d:          db '-d',0
-defroot:        db './www',0
+%define O_RDONLY    0
 
-; small bodies
-hello_msg:      db 'Hello from asmhttpd',13,10
-hello_len:      equ $-hello_msg
-auth_msg:       db 'auth required',13,10
-auth_len:       equ $-auth_msg
-ok_msg:         db 'ok',13,10
-ok_len:         equ $-ok_msg
-nf_msg:         db 'not found',13,10
-nf_len:         equ $-nf_msg
-sev_msg:        db 'server error',13,10
-sev_len:        equ $-sev_msg
-created_msg:    db 'created',13,10
-created_len:    equ $-created_msg
+%define STDIN       0
+%define STDOUT      1
+%define STDERR      2
 
-; sockaddr_in
-sin:            dw AF_INET
-sin_port:       dw 0
-sin_addr:       dd INADDR_ANY
-sin_zero:       dq 0
+%define BUF_SIZE    4096
 
-SECTION .bss
-reqbuf:         resb 16384
-hdrbuf:         resb 8192
-methodbuf:      resb 16
-pathbuf:        resb 1024
-querybuf:       resb 1024
-bodybuf:        resb 65536
-outbuf:         resb 131072
-docroot:        resb 1024
-filepath:       resb 4096
-numtmp:         resb 32
-status_tmp:     resd 1
-ct_ptr_tmp:     resq 1
+; =============================================================================
+;    DATA SECTION (Initialized Data)
+; =============================================================================
+section .data
+    ; --- Command Line Argument Strings ---
+    p_opt           db "-p", 0
+    d_opt           db "-d", 0
 
-SECTION .text
+    ; --- Server Messages ---
+    listen_msg_1    db "Server listening on http://127.0.0.1:", 0
+    listen_msg_2    db " with docroot '", 0
+    listen_msg_3    db "'...", 10, 0
+    usage_msg       db "Usage: ./asmhttpd -p <port> -d <docroot>", 10, 0
+    err_socket      db "Error: socket() failed", 10, 0
+    err_bind        db "Error: bind() failed", 10, 0
+    err_listen      db "Error: listen() failed", 10, 0
+    err_fork        db "Error: fork() failed", 10, 0
+    err_docroot     db "Error: Invalid document root", 10, 0
 
-; --- helpers ---
+    ; --- HTTP Responses ---
+    http_200_ok     db "HTTP/1.1 200 OK", 13, 10, 0
+    http_400_bad    db "HTTP/1.1 400 Bad Request", 13, 10, "Content-Type: text/plain", 13, 10, "Content-Length: 12", 13, 10, 13, 10, "Bad Request", 13, 10, 0
+    http_401_auth   db "HTTP/1.1 401 Unauthorized", 13, 10, "WWW-Authenticate: Basic realm=""User Visible Realm""", 13, 10, "Content-Length: 13", 13, 10, 13, 10, "Unauthorized", 13, 10, 0
+    http_404_notf   db "HTTP/1.1 404 Not Found", 13, 10, "Content-Type: text/plain", 13, 10, "Content-Length: 10", 13, 10, 13, 10, "Not Found", 13, 10, 0
+    http_500_err    db "HTTP/1.1 500 Internal Server Error", 13, 10, "Content-Type: text/plain", 13, 10, "Content-Length: 22", 13, 10, 13, 10, "Internal Server Error", 13, 10, 0
 
-; write_str(fd=rdi, z=rsi)  [FIXED: compute length on rsi, keep fd intact]
+    ; --- HTTP Headers ---
+    hdr_len_pfx     db "Content-Length: ", 0
+    hdr_len_sfx     db 13, 10, 13, 10, 0
+    hdr_ct_html     db "Content-Type: text/html", 13, 10, 0
+    hdr_ct_css      db "Content-Type: text/css", 13, 10, 0
+    hdr_ct_js       db "Content-Type: application/javascript", 13, 10, 0
+    hdr_ct_png      db "Content-Type: image/png", 13, 10, 0
+    hdr_ct_jpg      db "Content-Type: image/jpeg", 13, 10, 0
+    hdr_ct_gif      db "Content-Type: image/gif", 13, 10, 0
+    hdr_ct_plain    db "Content-Type: text/plain", 13, 10, 0
+    hdr_conn_close  db "Connection: close", 13, 10, 0
+
+    ; --- Hardcoded Routes ---
+    path_hello      db "/hello", 0
+    resp_hello      db "Hello from Assembly!", 10, 0
+    path_auth       db "/auth", 0
+    resp_auth_ok    db "Authenticated!", 10, 0
+    auth_header_pfx db "Authorization: Basic ", 0
+    auth_token      db "YWRtaW46c2VjcmV0", 0 ; "admin:secret" in base64
+    path_dyn_pfx    db "/dyn/", 0
+
+; =============================================================================
+;    BSS SECTION (Uninitialized Data)
+; =============================================================================
+section .bss
+    port            resq 1
+    docroot_ptr     resq 1
+    docroot_len     resq 1
+    listen_fd       resq 1
+
+    ; Buffers for each child process (on its stack)
+    ; We define their sizes here for clarity.
+    %define REQ_BUF_SIZE     4096
+    %define PATH_BUF_SIZE    1024
+    %define HDR_BUF_SIZE     256
+    %define FILEPATH_SIZE    2048
+    %define DYN_OUT_BUF_SIZE 2048
+    %define STAT_BUF_SIZE    144
+
+; =============================================================================
+;    TEXT SECTION (Code)
+; =============================================================================
+section .text
+global _start
+
+; Declare external C function from plugin.o
+extern plugin_dispatch
+
+; --- Helper Functions ---
+
+; write_str: Writes a null-terminated string to a file descriptor.
+; rdi: file descriptor
+; rsi: pointer to string
 write_str:
-        push    rbx
-        mov     rbx, rdi        ; save fd
-        mov     rdi, rsi        ; strlen(z)
-        call    strlen
-        mov     rdx, rax        ; len
-        mov     rdi, rbx        ; fd
-        call    write
-        pop     rbx
-        ret
+    push rdi          ; Save fd
+    push rsi          ; Save string pointer
+    call strlen       ; rax = length of string
+    pop rsi           ; Restore string pointer
+    pop rdi           ; Restore fd
+    mov rdx, rax      ; rdx = length
+    mov rax, SYSCALL_WRITE
+    syscall
+    ret
 
-; write_raw(fd=rdi, buf=rsi, len=rdx)
-write_raw:
-        call    write
-        ret
+; strlen: Calculates the length of a null-terminated string.
+; rdi: pointer to string
+; Returns: rax = length
+strlen:
+    xor rax, rax
+.loop:
+    cmp byte [rdi + rax], 0
+    je .end
+    inc rax
+    jmp .loop
+.end:
+    ret
 
-; itoa: rdi=value, rsi=buf -> rax=len
-itoa_dec:
-        push    rbx
-        mov     rbx, 10
-        xor     rcx, rcx
-        cmp     rdi, 0
-        jne     .nz
-        mov     byte [rsi], '0'
-        mov     rax, 1
-        pop     rbx
-        ret
-.nz:    sub     rsp, 64
-        mov     r8, rsp
-        xor     rcx, rcx
-.idiv:  xor     rdx, rdx
-        mov     rax, rdi
-        div     rbx
-        add     dl, '0'
-        mov     [r8+rcx], dl
-        inc     rcx
-        mov     rdi, rax
-        test    rax, rax
-        jnz     .idiv
-        mov     rdx, rcx
-        lea     r10, [r8+rcx-1]
-        mov     r11, rsi
-.rev:   cmp     rdx, 0
-        je      .done
-        mov     al, [r10]
-        mov     [r11], al
-        dec     r10
-        inc     r11
-        dec     rdx
-        jmp     .rev
-.done:  add     rsp, 64
-        mov     rax, rcx
-        pop     rbx
-        ret
-
-; logger to stderr: [METHOD PATH] STATUS BYTES\n
-; rdi=method, rsi=path, rdx=status, rcx=len
-log_line:
-        push    r12
-        push    r13
-        push    r14
-        push    r15
-        mov     r12, rdi        ; method
-        mov     r13, rsi        ; path
-        mov     r14, rdx        ; status
-        mov     r15, rcx        ; bytes
-
-        ; "["
-        mov     rdi, 2
-        mov     byte [numtmp], '['
-        mov     rsi, numtmp
-        mov     rdx, 1
-        call    write
-
-        ; METHOD
-        mov     rdi, 2
-        mov     rsi, r12
-        call    write_str
-
-        ; " "
-        mov     rdi, 2
-        mov     byte [numtmp], ' '
-        mov     rsi, numtmp
-        mov     rdx, 1
-        call    write
-
-        ; PATH
-        mov     rdi, 2
-        mov     rsi, r13
-        call    write_str
-
-        ; "] "
-        mov     rdi, 2
-        mov     word [numtmp], 0x205D
-        mov     rsi, numtmp
-        mov     rdx, 2
-        call    write
-
-        ; STATUS
-        mov     rdi, r14
-        mov     rsi, numtmp
-        call    itoa_dec
-        mov     rdx, rax
-        mov     rdi, 2
-        mov     rsi, numtmp
-        call    write
-
-        ; " "
-        mov     rdi, 2
-        mov     byte [numtmp], ' '
-        mov     rsi, numtmp
-        mov     rdx, 1
-        call    write
-
-        ; BYTES
-        mov     rdi, r15
-        mov     rsi, numtmp
-        call    itoa_dec
-        mov     rdx, rax
-        mov     rdi, 2
-        mov     rsi, numtmp
-        call    write
-
-        ; "\n"
-        mov     rdi, 2
-        mov     byte [numtmp], 10
-        mov     rsi, numtmp
-        mov     rdx, 1
-        call    write
-
-        pop     r15
-        pop     r14
-        pop     r13
-        pop     r12
-        ret
-
-; parse request line into methodbuf, pathbuf, querybuf
-parse_request:
-        mov     rsi, reqbuf
-        mov     rdi, methodbuf
-        xor     rcx, rcx
-.m:     mov     al, [rsi]
-        cmp     al, ' '
-        je      .m_done
-        mov     [rdi], al
-        inc     rdi
-        inc     rsi
-        inc     rcx
-        cmp     rcx, 15
-        jb      .m
-.m_done:mov     byte [rdi], 0
-        inc     rsi ; skip space
-        mov     rdi, pathbuf
-        xor     rcx, rcx
-.p:     mov     al, [rsi]
-        cmp     al, ' '
-        je      .p_done
-        cmp     al, '?'
-        je      .q_start
-        mov     [rdi], al
-        inc     rdi
-        inc     rsi
-        inc     rcx
-        cmp     rcx, 1023
-        jb      .p
-.p_done:mov     byte [rdi], 0
-        ret
-.q_start:
-        mov     byte [rdi], 0
-        inc     rsi
-        mov     rdi, querybuf
-        xor     rcx, rcx
-.q:     mov     al, [rsi]
-        cmp     al, ' '
-        je      .q_done
-        mov     [rdi], al
-        inc     rdi
-        inc     rsi
-        inc     rcx
-        cmp     rcx, 1023
-        jb      .q
-.q_done:mov     byte [rdi], 0
-        ret
-
-; basic auth
-check_basic:
-        mov     rdi, hdrbuf
-        mov     rsi, basic_prefix
-        call    strstr
-        test    rax, rax
-        jz      .no
-        mov     rdi, rax
-        call    strlen
-        add     rdi, rax             ; rdi -> base64 start
-        mov     rsi, basic_good
-        mov     rcx, 24
-.cmp:   cmp     rcx, 0
-        je      .yes
-        mov     al, [rdi]
-        mov     bl, [rsi]
-        cmp     al, bl
-        jne     .no
-        inc     rdi
-        inc     rsi
-        dec     rcx
-        jmp     .cmp
-.yes:   mov     rax, 1
-        ret
-.no:    xor     rax, rax
-        ret
-
-; rdi=fd, rsi=hdrline, rdx=ctline, rcx=body_ptr, r8=body_len
-send_with_hdr:
-        push    r12
-        push    r13
-        push    r14
-        push    r15
-        mov     r12, rdi
-        mov     r13, rsi
-        mov     r14, rdx
-        mov     r15, rcx
-        mov     r9,  r8
-        ; lines
-        mov     rdi, r12
-        mov     rsi, r13
-        call    write_str
-        mov     rdi, r12
-        mov     rsi, server_hdr
-        call    write_str
-        mov     rdi, r12
-        mov     rsi, r14
-        call    write_str
-        mov     rdi, r12
-        mov     rsi, conn_close
-        call    write_str
-        mov     rdi, r12
-        mov     rsi, cl_hdr
-        call    write_str
-        mov     rdi, r9
-        mov     rsi, numtmp
-        call    itoa_dec
-        mov     rdx, rax
-        mov     rdi, r12
-        mov     rsi, numtmp
-        call    write_raw
-        mov     rdi, r12
-        mov     rsi, crlf
-        call    write_str
-        mov     rdi, r12
-        mov     rsi, crlf
-        call    write_str
-        ; body
-        mov     rdi, r12
-        mov     rsi, r15
-        mov     rdx, r9
-        call    write_raw
-        ; log
-        mov     rdi, methodbuf
-        mov     rsi, pathbuf
-        mov     rdx, 200
-        cmp     r13, hdr_404
-        jne     .check500
-        mov     rdx, 404
-        jmp     .log
-.check500:
-        cmp     r13, hdr_500
-        jne     .log
-        mov     rdx, 500
-.log:
-        mov     rcx, r9
-        call    log_line
-        pop     r15
-        pop     r14
-        pop     r13
-        pop     r12
-        ret
-
-; rdi=fd, rsi=filepath
-serve_file:
-        push    r12
-        push    r13
-        mov     r12, rdi
-        mov     r13, rsi
-        mov     rdi, r13
-        mov     rsi, O_RDONLY
-        call    open
-        test    rax, rax
-        js      .nf
-        mov     r8, rax
-        mov     rdi, r8
-        xor     rsi, rsi
-        mov     rdx, SEEK_END
-        call    lseek
-        test    rax, rax
-        js      .nf_close
-        mov     r9, rax
-        cmp     r9, 65536
-        ja      .nf_close
-        mov     rdi, r8
-        xor     rsi, rsi
-        mov     rdx, SEEK_SET
-        call    lseek
-        mov     rdi, r8
-        mov     rsi, bodybuf
-        mov     rdx, r9
-        call    read
-        mov     rdi, r8
-        call    close
-        ; content-type heuristic
-        mov     rdi, r13
-        mov     rsi, ext_html
-        call    strstr
-        test    rax, rax
-        jz      .as_text
-        mov     rdx, ct_html
-        jmp     .send
-.as_text:
-        mov     rdx, ct_text
-.send:  mov     rdi, r12
-        mov     rsi, hdr_200
-        mov     rcx, bodybuf
-        mov     r8,  r9
-        call    send_with_hdr
-        jmp     .done
-.nf_close:
-        mov     rdi, r8
-        call    close
-.nf:
-        mov     rdi, r12
-        mov     rsi, hdr_404
-        mov     rdx, ct_text
-        mov     rcx, nf_msg
-        mov     r8,  nf_len
-        call    send_with_hdr
-.done:  pop     r13
-        pop     r12
-        ret
-
-; rdi=client fd
-handle_client:
-        push    r12
-        push    r13
-        push    r14
-        push    r15
-        mov     r12, rdi
-        xor     rbx, rbx
-.read:
-        mov     rdi, r12
-        mov     rsi, reqbuf
-        add     rsi, rbx
-        mov     rdx, 4096
-        call    read
-        test    rax, rax
-        jle     .err
-        add     rbx, rax
-        mov     byte [reqbuf+rbx], 0
-        mov     rdi, reqbuf
-        mov     rsi, crlfcrlf
-        call    strstr
-        test    rax, rax
-        jz      .read
-        ; copy headers into hdrbuf
-        mov     r13, rax
-        mov     rax, r13
-        sub     rax, reqbuf
-        cmp     rax, 8190
-        jbe     .hl_ok
-        mov     rax, 8190
-.hl_ok: mov     rdi, hdrbuf
-        mov     rsi, reqbuf
-        mov     rdx, rax
-        call    memcpy
-        mov     byte [hdrbuf+rdx], 0
-        ; parse request line
-        call    parse_request
-        ; method id (optional)
-        xor     r15, r15
-        mov     rdi, methodbuf
-        mov     rsi, get_s
-        call    strcmp
-        test    rax, rax
-        je      .meth_ok
-        mov     rdi, methodbuf
-        mov     rsi, post_s
-        call    strcmp
-        jne     .check_put
-        mov     r15, 1
-        jmp     .meth_ok
-.check_put:
-        mov     rdi, methodbuf
-        mov     rsi, put_s
-        call    strcmp
-        jne     .check_del
-        mov     r15, 2
-        jmp     .meth_ok
-.check_del:
-        mov     rdi, methodbuf
-        mov     rsi, delete_s
-        call    strcmp
-        jne     .meth_ok
-        mov     r15, 3
-.meth_ok:
-        ; /hello
-        mov     rdi, pathbuf
-        mov     rsi, p_hello
-        call    strcmp
-        jne     .check_auth
-        mov     rdi, r12
-        mov     rsi, hdr_200
-        mov     rdx, ct_text
-        mov     rcx, hello_msg
-        mov     r8,  hello_len
-        call    send_with_hdr
-        jmp     .done
-.check_auth:
-        mov     rdi, pathbuf
-        mov     rsi, p_auth
-        call    strcmp
-        jne     .check_dyn
-        call    check_basic
-        test    rax, rax
-        jz      .need_auth
-        mov     rdi, r12
-        mov     rsi, hdr_200
-        mov     rdx, ct_html
-        mov     rcx, ok_msg
-        mov     r8,  ok_len
-        call    send_with_hdr
-        jmp     .done
-.need_auth:
-        mov     rdi, r12
-        mov     rsi, hdr_401
-        mov     rdx, ct_text
-        mov     rcx, auth_msg
-        mov     r8,  auth_len
-        call    send_with_hdr
-        jmp     .done
-.check_dyn:
-        ; startswith /dyn ?
-        mov     rdi, pathbuf
-        mov     rsi, p_dyn
-        mov     rdx, 4
-        call    strncmp
-        test    rax, rax
-        jne     .static
-        ; Content-Length (optional)
-        xor     r14, r14
-        mov     rdi, hdrbuf
-        mov     rsi, cl_key
-        call    strstr
-        test    rax, rax
-        jz      .got_len
-        add     rax, 15
-.clsp:  mov     bl, [rax]
-        cmp     bl, ' '
-        jne     .clnum
-        inc     rax
-        jmp     .clsp
-.clnum: xor     r14, r14
-.cllp:  mov     bl, [rax]
-        cmp     bl, '0'
-        jb      .got_len
-        cmp     bl, '9'
-        ja      .got_len
-        imul    r14, r14, 10
-        sub     bl, '0'
-        movzx   rdx, bl
-        add     r14, rdx
-        inc     rax
-        jmp     .cllp
-.got_len:
-        ; body start
-        mov     rdi, reqbuf
-        mov     rsi, crlfcrlf
-        call    strstr
-        add     rax, 4
-        mov     r10, rax
-        ; copy body (bounded)
-        mov     rax, reqbuf
-        mov     r11, r10
-        sub     r11, rax
-        mov     rax, rbx
-        sub     rax, r11
-        mov     rdx, rax
-        cmp     r14, 0
-        je      .skipcpy
-        cmp     rdx, r14
-        jbe     .cpok
-        mov     rdx, r14
-.cpok:  mov     rdi, bodybuf
-        mov     rsi, r10
-        call    memcpy
-.skipcpy:
-        ; plugin_dispatch(method,path,query,body,len,out,cap,&status,&ct)
-        mov     rdi, methodbuf
-        mov     rsi, pathbuf
-        mov     rdx, querybuf
-        mov     rcx, bodybuf
-        mov     r8,  r14
-        mov     r9,  outbuf
-        sub     rsp, 32                 ; keep 16B alignment
-        mov     qword [ct_ptr_tmp], 0
-        mov     dword [status_tmp], 200
-        mov     qword [rsp], 65536      ; out_cap
-        lea     rax, [rel status_tmp]
-        mov     [rsp+8], rax            ; &status
-        lea     rax, [rel ct_ptr_tmp]
-        mov     [rsp+16], rax           ; &ct
-        call    plugin_dispatch
-        add     rsp, 32
-        cmp     rax, 0
-        jl      .err
-        mov     r8,  rax
-        mov     rdi, r12
-        mov     rsi, hdr_200
-        mov     rdx, ct_text
-        mov     rcx, outbuf
-        mov     rax, [ct_ptr_tmp]
-        test    rax, rax
-        jz      .sendplug
-        mov     rdx, rax
-.sendplug:
-        call    send_with_hdr
-        jmp     .done
-
-.static:
-        ; guard traversal
-        mov     rdi, pathbuf
-        mov     rsi, p_dotdot
-        call    strstr
-        test    rax, rax
-        jnz     .err
-
-        ; filepath = docroot + path (+ index.html if path ends with '/')
-        ; len_docroot
-        mov     rdi, docroot
-        call    strlen
-        mov     rcx, rax              ; rcx = pos in filepath
-        ; copy docroot (without NUL)
-        mov     rdi, filepath
-        mov     rsi, docroot
-        mov     rdx, rcx
-        call    memcpy
-        ; len_path
-        mov     rdi, pathbuf
-        call    strlen
-        mov     rdx, rax
-        ; append path (without NUL)
-        mov     rdi, filepath
-        add     rdi, rcx
-        mov     rsi, pathbuf
-        call    memcpy
-        add     rcx, rdx
-        ; NUL terminate for safety
-        mov     byte [filepath+rcx], 0
-
-        ; if path ends with '/', append index.html
-        mov     rdi, pathbuf
-        call    strlen
-        cmp     byte [pathbuf+rax-1], '/'
-        jne     .serve
-        mov     rdi, idx_def
-        call    strlen
-        mov     rdx, rax
-        mov     rdi, filepath
-        add     rdi, rcx
-        mov     rsi, idx_def
-        call    memcpy
-        add     rcx, rdx
-        mov     byte [filepath+rcx], 0
-
-.serve:
-        mov     rdi, r12
-        mov     rsi, filepath
-        call    serve_file
-        jmp     .done
-
-.err:
-        mov     rdi, r12
-        mov     rsi, hdr_500
-        mov     rdx, ct_text
-        mov     rcx, sev_msg
-        mov     r8,  sev_len
-        call    send_with_hdr
+; atoi: Converts a string to an integer.
+; rdi: pointer to string
+; Returns: rax = integer value
+atoi:
+    xor rax, rax
+    xor rcx, rcx
+.loop:
+    movzx rdx, byte [rdi + rcx]
+    cmp rdx, '0'
+    jb .done
+    cmp rdx, '9'
+    ja .done
+    sub rdx, '0'
+    imul rax, 10
+    add rax, rdx
+    inc rcx
+    jmp .loop
 .done:
-        pop     r15
-        pop     r14
-        pop     r13
-        pop     r12
-        ret
+    ret
 
-; parse decimal string to u16: rdi=char* -> rax=value
-ascii_to_u16:
-        xor     rax, rax
-        xor     rcx, rcx
-.next:  mov     dl, [rdi+rcx]
-        cmp     dl, 0
-        je      .done
-        cmp     dl, '0'
-        jb      .done
-        cmp     dl, '9'
-        ja      .done
-        imul    rax, rax, 10
-        sub     dl, '0'
-        movzx   rdx, dl
-        add     rax, rdx
-        inc     rcx
-        jmp     .next
-.done:  ret
+; itoa: Converts an integer to a string.
+; rdi: integer value
+; rsi: buffer to write string into
+itoa:
+    mov rcx, rsi    ; Save buffer pointer
+    mov rbx, 10     ; Divisor
+    xor rdx, rdx
+.loop:
+    div rbx         ; rax = rax / 10, rdx = rax % 10
+    add rdx, '0'    ; Convert digit to ASCII
+    push rdx        ; Push onto stack
+    test rax, rax
+    jnz .loop
+.write:
+    pop rax         ; Pop digit
+    mov [rcx], al   ; Write to buffer
+    inc rcx
+    cmp rcx, rsp    ; Check if stack is empty
+    jbe .write
+    mov byte [rcx], 0 ; Null-terminate
+    ret
 
-; --- main(argc, argv) ---
-main:
-        ; Preserve argc/argv immediately
-        mov     r12, rdi    ; argc
-        mov     r13, rsi    ; argv
+; strcmp: Compares two strings.
+; rdi: string 1
+; rsi: string 2
+; Returns: rax = 0 if equal, non-zero otherwise
+strcmp:
+.loop:
+    mov al, [rdi]
+    mov bl, [rsi]
+    cmp al, bl
+    jne .notequal
+    cmp al, 0
+    je .equal
+    inc rdi
+    inc rsi
+    jmp .loop
+.notequal:
+    sub rax, rbx
+    ret
+.equal:
+    xor rax, rax
+    ret
 
-        ; defaults: docroot="./www"
-        mov     rdi, defroot
-        call    strlen
-        mov     rdx, rax
-        inc     rdx
-        mov     rdi, docroot
-        mov     rsi, defroot
-        call    memcpy
+; strncmp: Compares first n bytes of two strings.
+; rdi: string 1
+; rsi: string 2
+; rdx: n
+; Returns: rax = 0 if equal
+strncmp:
+    xor rax, rax
+    xor rcx, rcx
+.loop:
+    cmp rcx, rdx
+    je .equal
+    mov al, [rdi + rcx]
+    mov bl, [rsi + rcx]
+    cmp al, bl
+    jne .notequal
+    cmp al, 0
+    je .equal
+    inc rcx
+    jmp .loop
+.notequal:
+    sub rax, rbx
+    ret
+.equal:
+    xor rax, rax
+    ret
 
-        ; default port 8080
-        mov     edi, 8080
-        call    htons
-        mov     [sin_port], ax
+; find_char: Finds first occurrence of a character in a string.
+; rdi: string
+; rsi: char
+; Returns: rax = pointer to char, or 0 if not found
+find_char:
+    mov al, sil
+.loop:
+    cmp byte [rdi], al
+    je .found
+    cmp byte [rdi], 0
+    je .notfound
+    inc rdi
+    jmp .loop
+.found:
+    mov rax, rdi
+    ret
+.notfound:
+    xor rax, rax
+    ret
 
-        ; parse args: -p <port> -d <docroot>
-        cmp     r12, 1
-        jle     .args_done
-        mov     rcx, 1
-.arg_loop:
-        cmp     rcx, r12
-        jge     .args_done
-        mov     rbx, [r13 + rcx*8]
-        mov     rdi, rbx
-        lea     rsi, [rel arg_p]
-        call    strcmp
-        test    rax, rax
-        jne     .check_d
-        inc     rcx
-        cmp     rcx, r12
-        jge     .args_done
-        mov     rdi, [r13 + rcx*8]
-        call    ascii_to_u16
-        mov     edi, eax
-        call    htons
-        mov     [sin_port], ax
-        inc     rcx
-        jmp     .arg_loop
-.check_d:
-        mov     rdi, rbx
-        lea     rsi, [rel arg_d]
-        call    strcmp
-        test    rax, rax
-        jne     .next
-        inc     rcx
-        cmp     rcx, r12
-        jge     .args_done
-        mov     rdi, [r13 + rcx*8]
-        call    strlen
-        mov     rdx, rax
-        inc     rdx
-        mov     rdi, docroot
-        mov     rsi, [r13 + rcx*8]
-        call    memcpy
-        inc     rcx
-        jmp     .arg_loop
-.next:
-        inc     rcx
-        jmp     .arg_loop
-.args_done:
+; log_line: Logs a request line like "GET /path"
+; rdi: method string
+; rsi: path string
+log_line:
+    push rdi
+    push rsi
 
-        ; socket/bind/listen
-        mov     edi, AF_INET
-        mov     esi, SOCK_STREAM
-        xor     edx, edx
-        call    socket
-        test    rax, rax
-        js      .exit1
-        mov     r12, rax
-        mov     rdi, r12
-        lea     rsi, [rel sin]
-        mov     edx, 16
-        call    bind
-        test    rax, rax
-        js      .exit1
-        mov     rdi, r12
-        mov     esi, 64
-        call    listen
-        test    rax, rax
-        js      .exit1
+    ; Print method
+    mov rdi, STDOUT
+    pop rsi
+    call write_str
+
+    ; Print space
+    mov rdi, STDOUT
+    mov rsi, ' '
+    push rsi
+    mov rsi, rsp
+    mov rdx, 1
+    mov rax, SYSCALL_WRITE
+    syscall
+    pop rsi
+
+    ; Print path
+    mov rdi, STDOUT
+    pop rsi
+    call write_str
+
+    ; Print newline
+    mov rdi, STDOUT
+    mov rsi, 10
+    push rsi
+    mov rsi, rsp
+    mov rdx, 1
+    mov rax, SYSCALL_WRITE
+    syscall
+    pop rsi
+
+    ret
+
+; --- Main Program Logic ---
+_start:
+    ; --- Argument Parsing ---
+    pop rcx             ; argc
+    mov r12, rcx        ; Save argc
+    mov r13, rsp        ; Save argv
+    cmp rcx, 5
+    jne .usage          ; Must be ./asmhttpd -p <port> -d <docroot>
+
+    mov rdi, [rsp + 8]  ; argv[1]
+    mov rsi, p_opt
+    call strcmp
+    test rax, rax
+    jnz .usage          ; Must be -p
+
+    mov rdi, [rsp + 16] ; argv[2]
+    call atoi
+    mov [port], rax
+
+    mov rdi, [rsp + 24] ; argv[3]
+    mov rsi, d_opt
+    call strcmp
+    test rax, rax
+    jnz .usage
+
+    mov rax, [rsp + 32] ; argv[4]
+    mov [docroot_ptr], rax
+    mov rdi, rax
+    call strlen
+    mov [docroot_len], rax
+    cmp rax, 0
+    je .docroot_error
+
+    jmp .setup_server
+
+.usage:
+    mov rdi, STDERR
+    mov rsi, usage_msg
+    call write_str
+    jmp .exit_error
+
+.docroot_error:
+    mov rdi, STDERR
+    mov rsi, err_docroot
+    call write_str
+    jmp .exit_error
+
+.setup_server:
+    ; --- Create Socket ---
+    mov rdi, AF_INET
+    mov rsi, SOCK_STREAM
+    mov rdx, PROTO_TCP
+    mov rax, SYSCALL_SOCKET
+    syscall
+    cmp rax, 0
+    jl .socket_fail
+    mov [listen_fd], rax
+
+    ; --- Set SO_REUSEADDR ---
+    mov rdi, [listen_fd]
+    mov rsi, SOL_SOCKET
+    mov rdx, SO_REUSEADDR
+    mov r10, 1          ; True
+    push r10
+    mov r10, rsp
+    mov r8, 4           ; sizeof(int)
+    mov rax, SYSCALL_SETSOCKOPT
+    syscall
+    pop r10
+
+    ; --- Bind Socket ---
+    sub rsp, 16                 ; Allocate sockaddr_in struct
+    mov rdi, [listen_fd]
+    mov rsi, rsp
+    mov rdx, 16                 ; sizeof(sockaddr_in)
+    mov word [rsi], AF_INET     ; sin_family
+    mov rax, [port]
+    bswap ax                    ; Host to network byte order (htons)
+    mov word [rsi + 2], ax      ; sin_port
+    mov dword [rsi + 4], 0      ; sin_addr (INADDR_ANY)
+    mov rax, SYSCALL_BIND
+    syscall
+    add rsp, 16                 ; Deallocate
+    test rax, rax
+    jl .bind_fail
+
+    ; --- Listen ---
+    mov rdi, [listen_fd]
+    mov rsi, 20                 ; Backlog
+    mov rax, SYSCALL_LISTEN
+    syscall
+    test rax, rax
+    jl .listen_fail
+
+    ; --- Print Listening Message ---
+    mov rdi, STDOUT
+    mov rsi, listen_msg_1
+    call write_str
+    mov rdi, [port]
+    lea rsi, [rsp - 20]
+    call itoa
+    mov rdi, STDOUT
+    lea rsi, [rsp - 20]
+    call write_str
+    mov rdi, STDOUT
+    mov rsi, listen_msg_2
+    call write_str
+    mov rdi, STDOUT
+    mov rsi, [docroot_ptr]
+    call write_str
+    mov rdi, STDOUT
+    mov rsi, listen_msg_3
+    call write_str
 
 .accept_loop:
-        mov     rdi, r12
-        xor     esi, esi
-        xor     edx, edx
-        call    accept
-        test    rax, rax
-        js      .accept_loop
-        mov     r13, rax
-        call    fork
-        test    rax, rax
-        jz      .child
-        mov     rdi, r13
-        call    close
-        jmp     .accept_loop
+    ; --- Accept Connection ---
+    mov rdi, [listen_fd]
+    xor rsi, rsi
+    xor rdx, rdx
+    mov rax, SYSCALL_ACCEPT
+    syscall
+    cmp rax, 0
+    jl .accept_loop ; Silently ignore accept errors and continue
 
-.child:
-        mov     rdi, r13
-        call    handle_client
-        mov     rdi, r13
-        call    close
-        xor     edi, edi
-        call    exit
+    mov r14, rax    ; Save client_fd
 
-.exit1:
-        mov     edi, 1
-        call    exit
+    ; --- Fork Process ---
+    mov rax, SYSCALL_FORK
+    syscall
+    cmp rax, 0
+    jl .fork_fail
+    je .child_process   ; If rax == 0, we are in the child
+
+.parent_process:
+    ; Close the client socket in the parent and loop back
+    mov rdi, r14
+    mov rax, SYSCALL_CLOSE
+    syscall
+    jmp .accept_loop
+
+.child_process:
+    ; Close the listening socket in the child
+    mov rdi, [listen_fd]
+    mov rax, SYSCALL_CLOSE
+    syscall
+
+    call handle_client  ; r14 still holds client_fd
+
+    ; Close client socket and exit
+    mov rdi, r14
+    mov rax, SYSCALL_CLOSE
+    syscall
+    jmp .exit_ok
+
+.socket_fail:
+    mov rdi, STDERR
+    mov rsi, err_socket
+    call write_str
+    jmp .exit_error
+
+.bind_fail:
+    mov rdi, STDERR
+    mov rsi, err_bind
+    call write_str
+    jmp .exit_error
+
+.listen_fail:
+    mov rdi, STDERR
+    mov rsi, err_listen
+    call write_str
+    jmp .exit_error
+
+.fork_fail:
+    mov rdi, STDERR
+    mov rsi, err_fork
+    call write_str
+    ; Close the accepted socket before exiting
+    mov rdi, r14
+    mov rax, SYSCALL_CLOSE
+    syscall
+    jmp .exit_error
+
+.exit_ok:
+    mov rax, SYSCALL_EXIT
+    mov rdi, 0
+    syscall
+
+.exit_error:
+    mov rax, SYSCALL_EXIT
+    mov rdi, 1
+    syscall
+
+; =============================================================================
+; handle_client: Main request handling logic for the child process.
+; Assumes client_fd is in r14.
+; =============================================================================
+handle_client:
+    sub rsp, REQ_BUF_SIZE + PATH_BUF_SIZE + HDR_BUF_SIZE + FILEPATH_SIZE + DYN_OUT_BUF_SIZE + STAT_BUF_SIZE ; Allocate stack space for buffers
+    lea r15, [rsp] ; req_buf
+    lea r12, [r15 + REQ_BUF_SIZE] ; path_buf
+    lea r11, [r12 + PATH_BUF_SIZE] ; hdr_buf
+    lea r10, [r11 + HDR_BUF_SIZE] ; filepath_buf
+    lea r9,  [r10 + FILEPATH_SIZE] ; dyn_out_buf
+    lea r8,  [r9 + DYN_OUT_BUF_SIZE] ; stat_buf
+
+    ; --- Read Request ---
+    mov rdi, r14        ; client_fd
+    mov rsi, r15        ; req_buf
+    mov rdx, REQ_BUF_SIZE - 1
+    mov rax, SYSCALL_READ
+    syscall
+    cmp rax, 0
+    jle .end_handle     ; Read failed or empty request
+
+    mov byte [r15 + rax], 0 ; Null-terminate request
+
+    ; --- Parse Request Line ---
+    ; Find method (e.g., "GET")
+    mov rdi, r15
+    mov rsi, ' '
+    call find_char
+    cmp rax, 0
+    je .bad_request
+    mov byte [rax], 0   ; Terminate method string
+    mov rbx, r15        ; rbx = method
+
+    ; Find path
+    inc rax
+    mov rdi, rax
+    mov rsi, ' '
+    call find_char
+    cmp rax, 0
+    je .bad_request
+    mov byte [rax], 0   ; Terminate path string
+    mov rcx, rdi        ; rcx = path
+
+    ; Log the request
+    mov rdi, rbx
+    mov rsi, rcx
+    call log_line
+
+    ; --- Routing ---
+    ; Check method and path to decide action
+    mov rdi, rbx
+    mov rsi, "GET"
+    call strcmp
+    test rax, rax
+    jnz .handle_post_put_delete ; If not GET, handle others
+
+.handle_get:
+    ; Simple routing for GET requests
+    mov rdi, rcx        ; path
+    mov rsi, path_hello
+    call strcmp
+    test rax, rax
+    je .get_hello
+
+    mov rdi, rcx
+    mov rsi, path_auth
+    call strcmp
+    test rax, rax
+    je .get_auth
+
+    mov rdi, rcx
+    mov rsi, path_dyn_pfx
+    mov rdx, 5 ; strlen("/dyn/")
+    call strncmp
+    test rax, rax
+    je .get_dyn
+
+    ; Default to serving a static file
+    jmp .serve_static_file
+
+.get_hello:
+    ; Handle /hello
+    mov rdi, r14
+    mov rsi, http_200_ok
+    call write_str
+    mov rdi, r14
+    mov rsi, hdr_ct_plain
+    call write_str
+    mov rdi, r14
+    mov rsi, hdr_conn_close
+    call write_str
+    mov rdi, resp_hello
+    call strlen
+    mov rbx, rax ; save length
+    ; build "Content-Length: xx\r\n\r\n"
+    mov rdi, r14
+    mov rsi, hdr_len_pfx
+    call write_str
+    mov rdi, rbx
+    mov rsi, r11 ; hdr_buf
+    call itoa
+    mov rdi, r14
+    mov rsi, r11
+    call write_str
+    mov rdi, r14
+    mov rsi, hdr_len_sfx
+    call write_str
+    ; send body
+    mov rdi, r14
+    mov rsi, resp_hello
+    mov rdx, rbx
+    mov rax, SYSCALL_WRITE
+    syscall
+    jmp .end_handle
+
+.get_auth:
+    ; Handle /auth - check for Authorization header
+    mov rdi, r15 ; request buffer
+    mov rsi, auth_header_pfx
+    call strstr_simple
+    cmp rax, 0
+    je .auth_fail ; Header not found
+
+    add rax, 21 ; strlen("Authorization: Basic ")
+    mov rdi, rax
+    mov rsi, auth_token
+    mov rdx, 20 ; strlen("YWRtaW46c2VjcmV0")
+    call strncmp
+    test rax, rax
+    jne .auth_fail
+
+.auth_ok:
+    ; Send authenticated response
+    mov rdi, r14
+    mov rsi, http_200_ok
+    call write_str
+    mov rdi, r14
+    mov rsi, hdr_ct_plain
+    call write_str
+    mov rdi, r14
+    mov rsi, hdr_conn_close
+    call write_str
+    mov rdi, resp_auth_ok
+    call strlen
+    mov rbx, rax
+    ; build Content-Length header
+    mov rdi, r14
+    mov rsi, hdr_len_pfx
+    call write_str
+    mov rdi, rbx
+    mov rsi, r11 ; hdr_buf
+    call itoa
+    mov rdi, r14
+    mov rsi, r11
+    call write_str
+    mov rdi, r14
+    mov rsi, hdr_len_sfx
+    call write_str
+    ; send body
+    mov rdi, r14
+    mov rsi, resp_auth_ok
+    mov rdx, rbx
+    mov rax, SYSCALL_WRITE
+    syscall
+    jmp .end_handle
+
+.auth_fail:
+    ; Send 401 Unauthorized
+    mov rdi, r14
+    mov rsi, http_401_auth
+    call write_str
+    jmp .end_handle
+
+.get_dyn:
+    ; Handle /dyn/* by calling C plugin
+    ; extern int plugin_dispatch(
+    ;   const char* method,   ; RDI
+    ;   const char* path,     ; RSI
+    ;   const char* query,    ; RDX
+    ;   const char* body,     ; RCX
+    ;   int   body_len,       ; R8
+    ;   char* out,            ; R9
+    ;   int   out_cap,        ; on stack
+    ;   int* out_status,     ; on stack
+    ;   const char** out_ct); ; on stack
+
+    ; Find query string
+    mov rdi, rcx ; path
+    mov rsi, '?'
+    call find_char
+    mov r13, 0   ; query_ptr
+    cmp rax, 0
+    je .no_query
+    mov byte [rax], 0 ; split path and query
+    inc rax
+    mov r13, rax ; query_ptr = start of query string
+.no_query:
+
+    sub rsp, 24 ; space for stack args
+    mov qword [rsp + 16], 0 ; out_ct ptr
+    lea rax, [rsp + 16]
+    push rax
+    mov dword [rsp + 8], 0 ; out_status
+    lea rax, [rsp + 8]
+    push rax
+    push DYN_OUT_BUF_SIZE ; out_cap
+    
+    mov rdi, "GET"
+    mov rsi, rcx
+    mov rdx, r13
+    xor rcx, rcx ; no body
+    xor r8, r8   ; no body_len
+    mov r9, r9   ; dyn_out_buf
+    call plugin_dispatch
+    mov rbx, rax ; save returned length
+
+    ; Pop stack arguments
+    add rsp, 40
+
+    ; Get status and content-type from plugin
+    mov rsi, [rsp + 16] ; out_ct
+    mov edi, [rsp + 8] ; out_status
+
+    ; Respond with plugin's output
+    cmp edi, 200
+    jne .dyn_not_ok
+    mov rdi, r14
+    mov r10, rsi ; save out_ct
+    mov rsi, http_200_ok
+    call write_str
+    mov rdi, r14
+    mov rsi, r10 ; restore out_ct
+    call write_str
+    jmp .dyn_send_body
+
+.dyn_not_ok:
+    ; Assume 404 for now
+    mov rdi, r14
+    mov rsi, http_404_notf
+    call write_str
+
+.dyn_send_body:
+    mov rdi, r14
+    mov rsi, hdr_conn_close
+    call write_str
+    ; build Content-Length
+    mov rdi, r14
+    mov rsi, hdr_len_pfx
+    call write_str
+    mov rdi, rbx
+    mov rsi, r11 ; hdr_buf
+    call itoa
+    mov rdi, r14
+    mov rsi, r11
+    call write_str
+    mov rdi, r14
+    mov rsi, hdr_len_sfx
+    call write_str
+    ; send body
+    mov rdi, r14
+    mov rsi, r9 ; dyn_out_buf
+    mov rdx, rbx
+    mov rax, SYSCALL_WRITE
+    syscall
+    jmp .end_handle
+
+.serve_static_file:
+    ; Build file path: docroot + requested path
+    mov rdi, r10 ; filepath_buf
+    mov rsi, [docroot_ptr]
+    call strcpy
+    mov rdi, r10
+    add rdi, [docroot_len]
+    mov rsi, rcx ; requested path
+    call strcpy
+
+    ; Check for directory traversal
+    mov rdi, rcx
+    mov rsi, ".."
+    call strstr_simple
+    test rax, rax
+    jnz .bad_request
+
+    ; If path is "/", append "index.html"
+    mov rdi, rcx
+    mov rsi, "/"
+    call strcmp
+    test rax, rax
+    jne .open_file
+    mov rdi, r10
+    add rdi, [docroot_len]
+    mov rsi, "/index.html"
+    call strcpy
+
+.open_file:
+    mov rdi, r10 ; filepath
+    mov rsi, O_RDONLY
+    xor rdx, rdx
+    mov rax, SYSCALL_OPEN
+    syscall
+    cmp rax, 0
+    jl .not_found
+    mov r13, rax ; file_fd
+
+    ; Get file size using fstat
+    mov rdi, r13
+    mov rsi, r8 ; stat_buf
+    mov rax, SYSCALL_FSTAT
+    syscall
+    test rax, rax
+    jl .internal_error
+
+    mov rbx, [r8 + 48] ; st_size is at offset 48 in stat struct
+
+    ; Send headers
+    mov rdi, r14
+    mov rsi, http_200_ok
+    call write_str
+    ; TODO: Determine Content-Type from file extension
+    mov rdi, r14
+    mov rsi, hdr_ct_html ; Defaulting to html for now
+    call write_str
+    mov rdi, r14
+    mov rsi, hdr_conn_close
+    call write_str
+    ; Send Content-Length
+    mov rdi, r14
+    mov rsi, hdr_len_pfx
+    call write_str
+    mov rdi, rbx
+    mov rsi, r11 ; hdr_buf
+    call itoa
+    mov rdi, r14
+    mov rsi, r11
+    call write_str
+    mov rdi, r14
+    mov rsi, hdr_len_sfx
+    call write_str
+
+    ; Send file content using sendfile
+    mov rdi, r14        ; out_fd
+    mov rsi, r13        ; in_fd
+    xor rdx, rdx        ; offset
+    mov r10, rbx        ; count
+    mov rax, SYSCALL_SENDFile
+    syscall
+
+    ; Close file
+    mov rdi, r13
+    mov rax, SYSCALL_CLOSE
+    syscall
+    jmp .end_handle
+
+.handle_post_put_delete:
+    ; For POST, PUT, DELETE, we just send a 200 OK as a placeholder
+    ; A real implementation would handle file uploads or deletions.
+    mov rdi, r14
+    mov rsi, http_200_ok
+    call write_str
+    mov rdi, r14
+    mov rsi, hdr_conn_close
+    call write_str
+    mov rdi, r14
+    mov rsi, hdr_len_pfx
+    call write_str
+    mov rdi, r14
+    mov rsi, "0" ; Zero content length
+    call write_str
+    mov rdi, r14
+    mov rsi, hdr_len_sfx
+    call write_str
+    jmp .end_handle
+
+.bad_request:
+    mov rdi, r14
+    mov rsi, http_400_bad
+    call write_str
+    jmp .end_handle
+
+.not_found:
+    mov rdi, r14
+    mov rsi, http_404_notf
+    call write_str
+    jmp .end_handle
+
+.internal_error:
+    ; Close file if open
+    cmp r13, 0
+    jle .send_500
+    mov rdi, r13
+    mov rax, SYSCALL_CLOSE
+    syscall
+.send_500:
+    mov rdi, r14
+    mov rsi, http_500_err
+    call write_str
+    jmp .end_handle
+
+.end_handle:
+    ; Restore stack pointer before returning
+    add rsp, REQ_BUF_SIZE + PATH_BUF_SIZE + HDR_BUF_SIZE + FILEPATH_SIZE + DYN_OUT_BUF_SIZE + STAT_BUF_SIZE
+    ret
+
+; --- More String Helpers ---
+
+; strcpy: Copies string from rsi to rdi
+strcpy:
+.loop:
+    mov al, [rsi]
+    mov [rdi], al
+    inc rsi
+    inc rdi
+    cmp al, 0
+    jne .loop
+    ret
+
+; strstr_simple: Finds substring (rsi) in string (rdi)
+; Returns: pointer to start of substring in rax, or 0
+strstr_simple:
+    push rdi
+    push rsi
+.outer_loop:
+    mov r8, rdi
+    mov r9, rsi
+.inner_loop:
+    mov al, [r9]
+    cmp al, 0
+    je .found
+    mov bl, [r8]
+    cmp bl, 0
+    je .not_found
+    cmp al, bl
+    jne .next_char
+    inc r8
+    inc r9
+    jmp .inner_loop
+.next_char:
+    inc rdi
+    jmp .outer_loop
+.found:
+    mov rax, rdi
+    pop rsi
+    pop rdi
+    ret
+.not_found:
+    xor rax, rax
+    pop rsi
+    pop rdi
+    ret
