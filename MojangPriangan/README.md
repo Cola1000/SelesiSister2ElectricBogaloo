@@ -154,3 +154,34 @@ File untuk deployment sederhana telah disediakan di dalam direktori `deploy/`.
 
 3.  **Akses Server:**
     Buka browser Anda dan akses `http://localhost:8080` atau gunakan `curl` untuk menguji berbagai endpoint yang tersedia.
+
+## Feature Checklist (Ngalegaan Kakawasan rubric)
+
+**Arsitektur:** x86-64 (Linux) — assembled with NASM, linked with GCC (`-no-pie`).
+
+### Wajib
+- **Listening to Port** — TCP socket, bind, listen di port yang ditentukan. ✅
+- **Fork per Request** — `fork()` untuk setiap koneksi klien (lihat `.accept_loop` / `.child_process`). ✅
+- **Parsing HTTP Methods** — dukung **GET**, **POST**, **PUT**, **DELETE**. ✅
+- **Melayani File Statis** — melayani berkas dari folder `www/` (default `/` → `www/index.html`) dengan pengecekan path (`security.c::is_path_safe`). ✅
+- **Routing Sederhana** — path khusus **`/hello`** mengembalikan HTML dinamis langsung dari Assembly. ✅
+
+### Bonus yang disertakan
+- **[KREATIVITAS] Basic path traversal guard** dengan `security.c`. ✅
+- **Sample deploy** (`deploy/asm-httpd.service`, `deploy/nginx.conf.example`) untuk systemd + reverse proxy NGINX/HTTPS. ✅
+
+> Catatan: **Integrasi C plugin** tersedia pada `plugin.c`/`plugin_api.h`. Untuk mengaktifkan rute dinamis `/dyn/*`, tautkan `plugin.o` dan panggil `plugin_dispatch` pada cabang rute yang sesuai.
+
+### Cara build & run
+```bash
+sudo pacman -S nasm gcc            # atau apt install nasm gcc
+make
+./asmhttpd 8080
+# Akses:
+#   http://127.0.0.1:8080/       -> www/index.html
+#   http://127.0.0.1:8080/hello  -> HTML dinamis dari Assembly
+# Uji:
+#   curl -X POST --data 'halo' http://127.0.0.1:8080/post_data.txt
+#   curl -X PUT  --data 'isi'  http://127.0.0.1:8080/notes.txt
+#   curl -X DELETE             http://127.0.0.1:8080/notes.txt
+```

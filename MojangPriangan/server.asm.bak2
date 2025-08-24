@@ -54,11 +54,6 @@ section .data
     http_405        db 'HTTP/1.1 405 Method Not Allowed', 13, 10, 13, 10, '<h1>405 Method Not Allowed</h1>'
     len_405         equ $ - http_405
 
-; Simple dynamic HTML body for /hello
-hello_body      db '<!doctype html><html><body><h1>Hello from x86-64 asm \\o/</h1></body></html>'
-len_hello_body  equ $ - hello_body
-
-
 section .bss
     sockaddr_in     resb 16
     request_buffer  resb 2048
@@ -147,49 +142,6 @@ _start:
     lea     rsi, [request_buffer + 4] ; Path starts after "GET "
     lea     rdi, [path_buffer]
     call    parse_path_get
-
-    ; --- Simple routing: /hello returns dynamic HTML ---
-    ; r13 = client_fd
-    ; rsi points to path (request_buffer + 4)
-    push    rsi
-    mov     rbx, rsi
-    ; check for "/hello"
-    cmp     byte [rbx], '/'
-    jne     .route_not_hello
-    cmp     byte [rbx+1], 'h'
-    jne     .route_not_hello
-    cmp     byte [rbx+2], 'e'
-    jne     .route_not_hello
-    cmp     byte [rbx+3], 'l'
-    jne     .route_not_hello
-    cmp     byte [rbx+4], 'l'
-    jne     .route_not_hello
-    cmp     byte [rbx+5], 'o'
-    jne     .route_not_hello
-    ; trailing char must be space or '?' (end of path or start of query)
-    mov     al, byte [rbx+6]
-    cmp     al, ' '
-    je      .send_hello
-    cmp     al, '?'
-    jne     .route_not_hello
-.send_hello:
-    ; send header
-    mov     rax, SYSCALL_WRITE
-    mov     rdi, r13
-    mov     rsi, http_200
-    mov     rdx, len_200
-    syscall
-    ; send body
-    mov     rax, SYSCALL_WRITE
-    mov     rdi, r13
-    mov     rsi, hello_body
-    mov     rdx, len_hello_body
-    syscall
-    pop     rsi
-    jmp     .close_and_exit
-.route_not_hello:
-    pop     rsi
-
     lea     rdi, [path_buffer] ; RDI now holds the full, safe path to open
     jmp     .serve_file
 
@@ -310,14 +262,9 @@ _start:
 
 ; --- Helper Subroutines ---
 parse_path_get:
-    ; Parses path for GET. If path is '/', sets buffer to 'www/index.html'.
-    ; If path starts with '/', skip it before building full path.
-    cmp     byte [rsi], '/'
-    jne     .not_root
-    cmp     byte [rsi+1], ' '
+    ; Parses path for GET. If path is '/', sets buffer to 'www/index.html'
+    cmp     byte [rsi], ' '
     je      .path_is_root
-    inc     rsi
-.not_root:
     call    build_full_path
     jc      .path_is_root ; If unsafe, also serve root as a safe default
     ret
