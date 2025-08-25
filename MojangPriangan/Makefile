@@ -9,7 +9,7 @@ asmhttpd: server.o security.o
 	$(CC) $(LDFLAGS) -o $@ server.o security.o
 
 server.o: server.asm
-	nasm -f elf64 -g -F dwarf server.asm -o server.o
+	nasm -f elf64 server.asm -o server.o
 
 security.o: security.c
 	$(CC) $(CFLAGS) -c security.c -o security.o

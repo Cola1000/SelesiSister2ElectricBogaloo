@@ -97,12 +97,12 @@ _start:
     mov     rsi, SOCK_STREAM
     xor     rdx, rdx
     syscall
-    mov     r12, rax ; Save server_fd in r12
+    mov     r12, rax
 
     ; --- Prepare and Bind Address ---
     mov     word [sockaddr_in], AF_INET
-    mov     word [sockaddr_in+2], 0x901F ; Port 8080, big-endian
-    mov     dword [sockaddr_in+4], 0      ; Bind to any IP
+    mov     word [sockaddr_in+2], 0x901F
+    mov     dword [sockaddr_in+4], 0      
     mov     rax, SYSCALL_BIND
     mov     rdi, r12
     mov     rsi, sockaddr_in
@@ -112,7 +112,7 @@ _start:
     ; --- Listen for Connections ---
     mov     rax, SYSCALL_LISTEN
     mov     rdi, r12
-    mov     rsi, 10 ; Backlog
+    mov     rsi, 10 
     syscall
 
 .accept_loop:
@@ -121,7 +121,7 @@ _start:
     xor     rsi, rsi
     xor     rdx, rdx
     syscall
-    mov     r13, rax ; Save client_fd in r13
+    mov     r13, rax 
 
     ; --- Fork for Concurrency ---
     mov     rax, SYSCALL_FORK
@@ -131,13 +131,13 @@ _start:
 
 .parent_process:
     mov     rax, SYSCALL_CLOSE
-    mov     rdi, r13 ; Close client_fd in parent
+    mov     rdi, r13 
     syscall
     jmp     .accept_loop
 
 .child_process:
     mov     rax, SYSCALL_CLOSE
-    mov     rdi, r12 ; Close server_fd in child
+    mov     rdi, r12 
     syscall
 
     ; --- Read request from client ---
@@ -180,7 +180,6 @@ _start:
     jne     .route_auth_skip
     cmp     byte [rbx+4], 'h'
     jne     .route_auth_skip
-    ; next must be space or '?' (end of path)
     mov     al, byte [rbx+5]
     cmp     al, ' '
     je      .route_auth_handle
@@ -408,7 +407,7 @@ _start:
     pop     rsi
 
 
-    ; --- Simple routing: /hello returns dynamic HTML (checked before static path parsing) ---
+    ; --- Simple routing: /hello returns dynamic HTML 
     push    rsi
     mov     rbx, rsi
     cmp     byte [rbx], '/'
@@ -446,11 +445,9 @@ _start:
 .route_skip_hello:
     pop     rsi
 
-   
-
     lea     rdi, [path_buffer]
     call    parse_path_get
-    lea     rdi, [path_buffer] ; RDI now holds the full, safe path to open
+    lea     rdi, [path_buffer]
     jmp     .serve_file
 
 .serve_file:
@@ -495,7 +492,6 @@ _start:
     mov     r8, rsi
     mov     r9, rdx
 
-
     ; open/create file at resolved path
     mov     rax, SYSCALL_OPEN
     lea     rdi, [path_buffer]
@@ -523,9 +519,8 @@ _start:
     mov     rdx, len_201
     jmp     .send_response
 
-
 .handle_put:
-    lea     rsi, [request_buffer + 4] ; Path starts after "PUT "
+    lea     rsi, [request_buffer + 4] 
     lea     rdi, [path_buffer]
     call    parse_path_write
     jc      .handle_400
@@ -533,7 +528,6 @@ _start:
     jc      .handle_400
     mov     r8, rsi
     mov     r9, rdx
-
 
     mov     rax, SYSCALL_OPEN
     lea     rdi, [path_buffer]
@@ -558,12 +552,11 @@ _start:
     mov     rdx, len_200
     jmp     .send_response
 
-
 .handle_delete:
-    lea     rsi, [request_buffer + 7] ; Path starts after "DELETE "
+    lea     rsi, [request_buffer + 7]
     lea     rdi, [path_buffer]
     call    parse_path_write
-    jc      .handle_400 ; If carry is set, path was unsafe
+    jc      .handle_400
     mov     rax, SYSCALL_UNLINK
     lea     rdi, [path_buffer]
     syscall
@@ -599,9 +592,6 @@ _start:
     xor     rdi, rdi
     syscall
 
-; Find header value by key (simple ASCII match)
-; IN: rsi=request_buffer, r15=request_len, rdi=key(zero-terminated)
-; OUT: rsi=ptr just after key, CF=0 if found; CF=1 if not found
 find_header_value:
     push rbx
     xor rcx, rcx
@@ -635,7 +625,6 @@ find_header_value:
     pop rbx
     ret
 
-; parse unsigned int at RSI, stop on non-digit; OUT: RAX=value, RSI advanced
 parse_int:
     xor rax, rax
 .pi_loop:
@@ -683,11 +672,7 @@ u32_to_dec:
     pop  rax
     ret
 
-
-
 parse_path_get:
-    ; Parses path for GET. If path is '/', sets buffer to 'www/index.html'.
-    ; If path starts with '/', skip it before building full path.
     cmp     byte [rsi], '/'
     jne     .not_root
     cmp     byte [rsi+1], ' '
@@ -695,7 +680,7 @@ parse_path_get:
     inc     rsi
 .not_root:
     call    build_full_path
-    jc      .path_is_root ; If unsafe, also serve root as a safe default
+    jc      .path_is_root
     ret
 .path_is_root:
     mov     rdi, path_buffer
@@ -707,31 +692,36 @@ parse_path_get:
     ret
 
 parse_path_write:
-    ; Parses path for PUT/DELETE. Returns carry flag if unsafe.
     cmp     byte [rsi], '/'
     jne     .pw_build
-    inc     rsi                 ; skip leading '/'
+    inc     rsi
 .pw_build:
     call    build_full_path
     ret
 
 build_full_path:
-    ; Input:  rsi = raw path after method (possibly starting at '/')
-    ;         rdi = path_buffer
-    ; Output: path_buffer = "www/<path>\0"
-    ;         CF=1 if unsafe, CF=0 if safe
-
-    push    rsi                         ; keep original
-    mov     rdi, path_buffer
+    push    rsi                         
+    push    rdi                         
+    
+    ; Copy "www/" prefix
+    mov     rcx, len_www_prefix - 1     ; exclude null terminator
+    push    rsi
     mov     rsi, www_prefix
-    mov     rcx, len_www_prefix
-    rep     movsb                       ; "www/"
+    rep     movsb
     pop     rsi
 
-    ; copy path chars until space
+    ; Copy path chars until space, '?' or HTTP version
 .parse_loop:
     mov     al, [rsi]
     cmp     al, ' '
+    je      .found_end
+    cmp     al, '?'
+    je      .found_end
+    cmp     al, 13      ; CR
+    je      .found_end
+    cmp     al, 10      ; LF  
+    je      .found_end
+    cmp     al, 0
     je      .found_end
     mov     [rdi], al
     inc     rsi
@@ -740,42 +730,41 @@ build_full_path:
 
 .found_end:
     mov     byte [rdi], 0               ; NUL-terminate
+    pop     rdi                         ; restore path_buffer start
+    pop     rsi                         ; restore original
 
-    ; First try the C helper (bonus feature)
-    lea     rdi, [path_buffer]
+    ; Check if path is safe using C helper first
+    push    rdi
     call    is_path_safe
+    pop     rdi
     test    rax, rax
-    jne     .path_safe                  ; C says OK → accept
+    jne     .path_safe                  
 
-    ; Assembly fallback: allow [A-Za-z0-9._-] only, require at least one '.',
-    ; and no extra '/' after "www/"
-    lea     rsi, [path_buffer + len_www_prefix]
+    lea     rsi, [rdi + len_www_prefix - 1]  ;
     xor     ecx, ecx                    ; seen_dot = 0
 .fb_loop:
     mov     al, [rsi]
     test    al, al
     je      .fb_done                    ; end of string
     cmp     al, '/'
-    je      .fb_unsafe
+    je      .fb_unsafe                  ; no subdirs allowed
     cmp     al, '.'
     jne     .fb_notdot
-    inc     ecx
+    inc     ecx                         ; count dots
 .fb_notdot:
-    ; 0..9
+    ; Check valid characters: 0-9, A-Z, a-z, ., -, _
     cmp     al, '0'
     jb      .fb_more
     cmp     al, '9'
     jbe     .fb_ok
 
 .fb_more:
-    ; A..Z
     cmp     al, 'A'
     jb      .fb_lower
     cmp     al, 'Z'
     jbe     .fb_ok
 
 .fb_lower:
-    ; a..z
     cmp     al, 'a'
     jb      .fb_sym
     cmp     al, 'z'
@@ -796,7 +785,7 @@ build_full_path:
 
 .fb_done:
     test    ecx, ecx
-    jz      .fb_unsafe                  ; must contain dot in filename
+    jz      .fb_unsafe                  ; must contain at least one dot
 .path_safe:
     clc
     ret
@@ -805,47 +794,65 @@ build_full_path:
     stc
     ret
 
-
 find_body:
-    ; Finds the start of the HTTP body by scanning for CRLFCRLF ("").
+    ; Finds the start of the HTTP body by scanning for CRLFCRLF or LFLF
     ; Input: r15 = request length
     ; Output: rsi = pointer to body, rdx = body length, CF=0 on success, CF=1 on error
     xor     rcx, rcx
 .fb_loop:
     cmp     rcx, r15
-    jae     .fb_error
-    mov     al, byte [request_buffer + rcx]
-    cmp     al, 13
+    jae     .fb_try_lflf                ; Try LFLF if CRLFCRLF not found
+    
+    ; Check for CRLFCRLF sequence
+    cmp     rcx, r15
+    jae     .fb_try_lflf
+    cmp     byte [request_buffer + rcx], 13     ; CR
     jne     .fb_next
-    cmp     byte [request_buffer + rcx + 1], 10
+    inc     rcx
+    cmp     rcx, r15
+    jae     .fb_try_lflf
+    cmp     byte [request_buffer + rcx], 10     ; LF
     jne     .fb_next
-    cmp     byte [request_buffer + rcx + 2], 13
+    inc     rcx
+    cmp     rcx, r15
+    jae     .fb_try_lflf
+    cmp     byte [request_buffer + rcx], 13     ; CR
     jne     .fb_next
-    cmp     byte [request_buffer + rcx + 3], 10
+    inc     rcx
+    cmp     rcx, r15
+    jae     .fb_try_lflf
+    cmp     byte [request_buffer + rcx], 10     ; LF
     jne     .fb_next
-    lea     rsi, [request_buffer + rcx + 4]
+    inc     rcx
+    ; Found CRLFCRLF - body starts here
+    lea     rsi, [request_buffer + rcx]
     mov     rdx, r15
     sub     rdx, rcx
-    sub     rdx, 4
     clc
     ret
+
 .fb_next:
     inc     rcx
     jmp     .fb_loop
 
-.fb_error:
+.fb_try_lflf:
+    ; Try simpler LFLF pattern
     xor     rcx, rcx
 .fb2_loop:
     cmp     rcx, r15
     jae     .fb_fail
-    cmp     byte [request_buffer + rcx], 10
+    cmp     byte [request_buffer + rcx], 10     ; LF
     jne     .fb2_next
-    cmp     byte [request_buffer + rcx + 1], 10
+    inc     rcx
+    cmp     rcx, r15
+    jae     .fb_fail
+    cmp     byte [request_buffer + rcx], 10     ; LF
     jne     .fb2_next
-    lea     rsi, [request_buffer + rcx + 2]
+    inc     rcx
+    ; Found LFLF - body starts here
+    lea     rsi, [request_buffer + rcx]
     mov     rdx, r15
     sub     rdx, rcx
-    sub     rdx, 2
     clc
     ret
 .fb2_next:
@@ -853,81 +860,168 @@ find_body:
     jmp     .fb2_loop
 
 .fb_fail:
-    stc
-    ret
-
-.found_body:
-    lea     rsi, [request_buffer + rcx + 4] ; Body starts after the separator
+    xor     rcx, rcx
+.fb_simple:
+    cmp     rcx, r15
+    jae     .fb_no_body
+    cmp     byte [request_buffer + rcx], 10
+    je      .fb_simple_found
+    inc     rcx
+    jmp     .fb_simple
+    
+.fb_simple_found:
+    inc     rcx
+.fb_skip_headers:
+    cmp     rcx, r15
+    jae     .fb_no_body
+    cmp     byte [request_buffer + rcx], 10
+    je      .fb_body_after_lf
+    ; Skip to next line
+.fb_skip_line:
+    cmp     rcx, r15
+    jae     .fb_no_body
+    cmp     byte [request_buffer + rcx], 10
+    je      .fb_check_empty
+    inc     rcx
+    jmp     .fb_skip_line
+.fb_check_empty:
+    inc     rcx
+    jmp     .fb_skip_headers
+    
+.fb_body_after_lf:
+    inc     rcx
+    lea     rsi, [request_buffer + rcx]
     mov     rdx, r15
     sub     rdx, rcx
-    sub     rdx, 4 ; rdx is now the length of the body
-    clc ; Clear carry flag to indicate success
+    clc
+    ret
+
+.fb_no_body:
+    ; No body found - return empty body
+    lea     rsi, [request_buffer + r15]
+    xor     rdx, rdx
+    clc
     ret
 
 _ensure_body_loaded:
-    push rbx
-    ; Try with what we have
+    push    rbx
+    push    rcx
+    push    r8
+    push    r9
+    push    r10
+    
+    ; Try to find body with current data
     call    find_body
-    jnc     .check_len
-    ; If not found, read more a few times
-    xor     rbx, rbx
-.el_try_again:
+    jnc     .check_content_length       ; Found body separator
+
+    ; If body separator not found, try reading more data
+    mov     rbx, 0                      ; retry counter
+.el_read_more:
+    cmp     rbx, 5                      ; max 5 retries
+    jae     .el_use_what_we_have
+    
+    ; Calculate remaining buffer space
     mov     rax, 2048
     sub     rax, r15
-    cmp     rax, 0
-    je      .fail
+    cmp     rax, 10                     
+    jl      .el_use_what_we_have
+    
+    ; Read more data
     mov     rax, SYSCALL_READ
     mov     rdi, r13
     lea     rsi, [request_buffer + r15]
-    mov     rdx, 2048
-    sub     rdx, r15
+    mov     rdx, rax                    ; remaining space
     syscall
     cmp     rax, 0
-    jle     .fail
-    add     r15, rax
+    jle     .el_use_what_we_have        ; no more data or error
+    
+    add     r15, rax                    ; update total length
+    inc     rbx                         ; increment retry counter
+    
+    ; Try to find body again
     call    find_body
-    jnc     .check_len
-    inc     rbx
-    cmp     rbx, 8
-    jl      .el_try_again
-    jmp     .fail
+    jnc     .check_content_length       ; Found it!
+    jmp     .el_read_more
 
-.check_len:
+.el_use_what_we_have:
+    ; Fallback: assume everything after first blank line is body
+    call    find_body                   ; This should handle fallback cases
+    jc      .el_fail                    ; If still no body, fail
+
+.check_content_length:
+    ; rsi = body start, rdx = current body length
     push    rsi
     push    rdx
+    
+    ; Look for Content-Length header
     lea     rdi, [rel clen_key]
     lea     rsi, [request_buffer]
     call    find_header_value
-    jc      .done_len
+    jc      .el_done                    ; No Content-Length header - use what we have
+    
+    ; Parse Content-Length value
     call    parse_int
-    mov     r10, rax
-    pop     rdx
-    pop     rsi
-.more_body:
+    mov     r10, rax                    ; Expected body length
+    
+    pop     rdx                         ; Current body length
+    pop     rsi                         ; Body start
+    
+    ; Check if we have enough body data
     cmp     rdx, r10
-    jae     .done_len
-    mov     rax, 2048
-    sub     rax, r15
-    cmp     rax, 0
-    je      .fail
-    mov     rax, SYSCALL_READ
+    jae     .el_done                    ; We have enough data
+    
+    ; Need to read more body data
+    mov     rbx, 0                      ; retry counter
+.el_read_body:
+    cmp     rbx, 10                     ; max 10 retries for body
+    jae     .el_done                    ; Use what we have
+    
+    ; Calculate how much more we need and how much space we have
+    mov     rax, r10
+    sub     rax, rdx                    ; bytes still needed
+    mov     rcx, 2048
+    sub     rcx, r15                    ; buffer space remaining
+    cmp     rcx, 1
+    jl      .el_done                    ; No buffer space
+    
+    ; Read more data (limit to buffer space available)
+    cmp     rax, rcx
+    jl      .el_read_exact
+    mov     rax, rcx                    ; Read only what fits in buffer
+.el_read_exact:
     mov     rdi, r13
     lea     rsi, [request_buffer + r15]
-    mov     rdx, 2048
-    sub     rdx, r15
+    mov     rdx, rax
+    mov     rax, SYSCALL_READ
     syscall
     cmp     rax, 0
-    jle     .fail
-    add     r15, rax
+    jle     .el_done                    ; No more data or error
+    
+    add     r15, rax                    ; Update total request length
+    
+    ; Recalculate body length
     call    find_body
-    jc      .fail
-    jmp     .more_body
+    jc      .el_fail                    ; This shouldn't happen now
+    
+    inc     rbx                         ; Increment retry counter
+    cmp     rdx, r10
+    jb      .el_read_body              ; Still need more data
+    jmp     .el_done
 
-.done_len:
-    clc
+.el_done:
+    clc                                 ; Success
+    pop     r10
+    pop     r9
+    pop     r8
+    pop     rcx
     pop     rbx
     ret
-.fail:
-    stc
+
+.el_fail:
+    stc                                 ; Failure
+    pop     r10
+    pop     r9
+    pop     r8
+    pop     rcx
     pop     rbx
     ret

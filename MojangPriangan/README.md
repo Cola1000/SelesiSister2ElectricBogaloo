@@ -19,14 +19,10 @@ Server dapat menerima argumen command-line `-p` untuk menentukan port TCP yang a
 2.  **`bind()`**: Menetapkan alamat (IP dan port) ke file descriptor socket yang telah dibuat.
 3.  **`listen()`**: Menandai socket sebagai socket pasif yang akan digunakan untuk menerima koneksi masuk.
 
-**Screenshot Kode (`server.asm`):**
-!(https://i.imgur.com/gO0bN2t.png)
-
 **Contoh Menjalankan:**
 ```bash
 # Menjalankan server pada port 8080
-./asmhttpd -p 8080 -d ./www
-Server listening on [http://127.0.0.1:8080](http://127.0.0.1:8080) with docroot './www'...
+./asmhttpd 8080
 ````
 
 ### 2\. Forking Child Process untuk setiap Request
@@ -41,9 +37,6 @@ Untuk menangani beberapa koneksi secara bersamaan tanpa saling memblokir, server
 4.  **Proses Anak**: `fork()` mengembalikan 0. Proses anak bertanggung jawab penuh untuk menangani request dari klien, setelah itu ia akan keluar (`exit()`).
 5.  **Proses Induk**: `fork()` mengembalikan PID dari anak. Proses induk hanya menutup *file descriptor* koneksi di sisinya dan kembali ke `accept()` untuk menunggu koneksi berikutnya.
 
-**Screenshot Kode (`server.asm`):**
-\!(https://www.google.com/search?q=https://i.imgur.com/2U5Vn6g.png)
-
 ### 3\. Parsing HTTP Methods (GET, POST, PUT, DELETE)
 
 Server dapat mem-parsing request line dari klien untuk mengidentifikasi metode HTTP yang digunakan.
@@ -54,20 +47,19 @@ Server dapat mem-parsing request line dari klien untuk mengidentifikasi metode H
 2.  Kode akan mencari spasi pertama untuk memisahkan nama metode (misalnya, "GET") dari sisa request line.
 3.  Nama metode kemudian dibandingkan dengan string yang telah ditentukan (`"GET"`, `"POST"`, dll.) untuk menentukan tindakan selanjutnya.
 
-**Screenshot Kode (`server.asm`):**
-\!(https://www.google.com/search?q=https://i.imgur.com/f0u9lWJ.png)
-
 **Contoh Pengujian:**
 
 ```bash
 # Uji metode GET
-curl -v [http://127.0.0.1:8080/](http://127.0.0.1:8080/)
+curl -v http://127.0.0.1:8080/
+curl -v http://localhost:8080/hello
 
 # Uji metode POST (server akan merespon 200 OK)
-curl -v -X POST --data "test" [http://127.0.0.1:8080/anypath](http://127.0.0.1:8080/anypath)
+curl -v -X POST --data "TONIGHT THE MUSIC SING SO LOUD!" http://127.0.0.1:8080/test_posting.txt
 ```
+Note: Bisa lihat hasil post di directory www/
 
-### 4\. Melayani Permintaan File Statis
+<!-- ### 4\. Melayani Permintaan File Statis
 
 Server dapat menyajikan file dari direktori lokal yang ditentukan menggunakan argumen `-d`. Ini memungkinkan server untuk mengirimkan file HTML, CSS, JavaScript, gambar, dan lainnya.
 
@@ -79,7 +71,7 @@ Server dapat menyajikan file dari direktori lokal yang ditentukan menggunakan ar
 4.  Syscall `sendfile()` yang sangat efisien digunakan untuk menyalin data dari file descriptor file langsung ke file descriptor socket, menghindari penyalinan data yang tidak perlu ke *user space*.
 
 **Screenshot Pengujian:**
-\!(https://www.google.com/search?q=https://i.imgur.com/r6s2s1A.png)
+![]()-->
 
 ### 5\. Melayani Permintaan Berdasarkan Rute/Path (Routing)
 
@@ -93,8 +85,7 @@ Server mengimplementasikan routing sederhana untuk menangani path tertentu secar
   - `/dyn/*`: Meneruskan permintaan ke plugin C eksternal.
   - Jika tidak ada rute yang cocok, server akan mencoba melayani permintaan sebagai file statis.
 
-**Screenshot Kode (`server.asm`):**
-\!(https://www.google.com/search?q=https://i.imgur.com/0F7eK1j.png)
+![Hasil_Routing](gambar/image.png)
 
 -----
 
@@ -115,8 +106,9 @@ Server ini dapat memanggil fungsi yang ditulis dalam bahasa C. Rute yang diawali
 
 ```bash
 # Memanggil fungsi C untuk menjumlahkan dua angka
-curl "[http://127.0.0.1:8080/dyn/add?a=100&b=23](http://127.0.0.1:8080/dyn/add?a=100&b=23)"
-# Output: {"a":100,"b":23,"sum":123}
+curl -v 'http://127.0.0.1:8080/dyn/add?a=2&b=40' --output -
+# Output: {"a":9,"b":60,"sum":69}
+# Tbh, this doesn't really work, I think it's because I put in addr instead an integer :v
 ```
 
 ### 2\. [KREATIVITAS] Otentikasi & Logging Manual
@@ -125,14 +117,14 @@ curl "[http://127.0.0.1:8080/dyn/add?a=100&b=23](http://127.0.0.1:8080/dyn/add?a
   - **Logging Manual:** Untuk membantu debugging dan memberikan feedback, server mencetak setiap request yang masuk ke `stdout`. Ini adalah bentuk logging manual yang sederhana namun efektif.
 
 **Screenshot Logging:**
-\!(https://www.google.com/search?q=https://i.imgur.com/x5Jk1vR.png)
+![Another_One](gambar/image2.png)
 
-### 3\. [EKSPERIMEN] Deployment
+<!-- ### 3\. [EKSPERIMEN] Deployment
 
 File untuk deployment sederhana telah disediakan di dalam direktori `deploy/`.
 
   - **`asm-httpd.service`**: Sebuah file unit `systemd` untuk menjalankan server sebagai layanan di latar belakang.
-  - **`nginx.conf.example`**: Contoh konfigurasi NGINX untuk digunakan sebagai *reverse proxy* di depan server Assembly. Ini adalah praktik standar untuk deployment, memungkinkan NGINX menangani traffic HTTPS, kompresi, dan lainnya.
+  - **`nginx.conf.example`**: Contoh konfigurasi NGINX untuk digunakan sebagai *reverse proxy* di depan server Assembly. Ini adalah praktik standar untuk deployment, memungkinkan NGINX menangani traffic HTTPS, kompresi, dan lainnya. -->
 
 -----
 
@@ -149,23 +141,18 @@ File untuk deployment sederhana telah disediakan di dalam direktori `deploy/`.
     Gunakan binary yang telah dibuat, tentukan port dan direktori `www`.
 
     ```bash
-    ./asmhttpd -p 8080 -d ./www
+    ./asmhttpd 8080
     ```
 
 3.  **Akses Server:**
     Buka browser Anda dan akses `http://localhost:8080` atau gunakan `curl` untuk menguji berbagai endpoint yang tersedia.
-
-### Update (v2)
-- Fix route `/hello` checked **before** static path parsing so it always returns dynamic HTML.
-- Make body parsing for **POST/PUT** robust against different newline styles (CRLF / LF).
-
 
 ### Implemented routes in this build
 - `/` → serves `www/index.html`
 - `/hello` → dynamic HTML from assembly
 - `/auth` → HTTP Basic (admin/secret). Returns 401 with `WWW-Authenticate` if missing/invalid; returns 200 + small body if OK.
 - `/dyn/hello` → text/plain response from dynamic route
-- `/dyn/add?a=2&b=40` → JSON `{"a":2,"b":40,"sum":42}`
+- `/dyn/add?a=60&b=9` → JSON `{"a":60,"b":9,"sum":69}`
 - `POST /www/post_result.txt` → writes body
 - `PUT /<path>` → creates/replaces file under `www/` (fixed leading slash handling)
 - `DELETE /<path>` → removes file under `www/`
