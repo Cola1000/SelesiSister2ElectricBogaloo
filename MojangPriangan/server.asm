@@ -1,8 +1,3 @@
-; =============================================================================
-; asmhttpd: A simple, robust HTTP server in x86-64 Assembly for Linux (NASM)
-; Final version with all bug fixes.
-; =============================================================================
-
 %define SYSCALL_READ        0
 %define SYSCALL_WRITE       1
 %define SYSCALL_OPEN        2
@@ -28,6 +23,8 @@ section .data
     POST_METHOD     dd 'POST'
     PUT_METHOD      dd 'PUT '
     DELETE_METHOD   dd 'DELE' ; 'DELETE'
+
+    clen_key        db 'Content-Length: ',0
 
     ; Default files and paths
     file_root       db 'www/index.html', 0
@@ -493,11 +490,11 @@ _start:
     jc      .handle_400
 
     ; find body
-    call    find_body
+    call    _ensure_body_loaded
     jc      .handle_400
-    ; preserve body ptr/len (open() will clobber rsi/rdx)
-    mov     r8, rsi            ; r8 = body ptr
-    mov     r9, rdx            ; r9 = body len
+    mov     r8, rsi
+    mov     r9, rdx
+
 
     ; open/create file at resolved path
     mov     rax, SYSCALL_OPEN
@@ -532,10 +529,11 @@ _start:
     lea     rdi, [path_buffer]
     call    parse_path_write
     jc      .handle_400
-    call    find_body
+    call    _ensure_body_loaded
     jc      .handle_400
-    mov     r8, rsi            ; body ptr
-    mov     r9, rdx            ; body len
+    mov     r8, rsi
+    mov     r9, rdx
+
 
     mov     rax, SYSCALL_OPEN
     lea     rdi, [path_buffer]
@@ -718,35 +716,93 @@ parse_path_write:
     ret
 
 build_full_path:
-    ; Input: rsi=path from request, rdi=path_buffer.
-    ; Output: rdi has full path. CF is set if path is unsafe.
-    push    rsi ; Save original path pointer
+    ; Input:  rsi = raw path after method (possibly starting at '/')
+    ;         rdi = path_buffer
+    ; Output: path_buffer = "www/<path>\0"
+    ;         CF=1 if unsafe, CF=0 if safe
+
+    push    rsi                         ; keep original
     mov     rdi, path_buffer
     mov     rsi, www_prefix
     mov     rcx, len_www_prefix
-    rep movsb   ; Copy "www/" into buffer
-    pop     rsi ; Restore original path pointer
+    rep     movsb                       ; "www/"
+    pop     rsi
+
+    ; copy path chars until space
 .parse_loop:
-    mov     al, byte [rsi]
+    mov     al, [rsi]
     cmp     al, ' '
     je      .found_end
-    mov     byte [rdi], al
+    mov     [rdi], al
     inc     rsi
     inc     rdi
     jmp     .parse_loop
+
 .found_end:
-    mov     byte [rdi], 0 ; Null-terminate
-    ; [BONUS] Call C function for security check
+    mov     byte [rdi], 0               ; NUL-terminate
+
+    ; First try the C helper (bonus feature)
     lea     rdi, [path_buffer]
     call    is_path_safe
-    cmp     rax, 0
-    jne     .path_safe
-    ; Path is unsafe, set carry flag and return
-    stc
-    ret
+    test    rax, rax
+    jne     .path_safe                  ; C says OK → accept
+
+    ; Assembly fallback: allow [A-Za-z0-9._-] only, require at least one '.',
+    ; and no extra '/' after "www/"
+    lea     rsi, [path_buffer + len_www_prefix]
+    xor     ecx, ecx                    ; seen_dot = 0
+.fb_loop:
+    mov     al, [rsi]
+    test    al, al
+    je      .fb_done                    ; end of string
+    cmp     al, '/'
+    je      .fb_unsafe
+    cmp     al, '.'
+    jne     .fb_notdot
+    inc     ecx
+.fb_notdot:
+    ; 0..9
+    cmp     al, '0'
+    jb      .fb_more
+    cmp     al, '9'
+    jbe     .fb_ok
+
+.fb_more:
+    ; A..Z
+    cmp     al, 'A'
+    jb      .fb_lower
+    cmp     al, 'Z'
+    jbe     .fb_ok
+
+.fb_lower:
+    ; a..z
+    cmp     al, 'a'
+    jb      .fb_sym
+    cmp     al, 'z'
+    jbe     .fb_ok
+
+.fb_sym:
+    cmp     al, '_'
+    je      .fb_ok
+    cmp     al, '-'
+    je      .fb_ok
+    cmp     al, '.'
+    je      .fb_ok
+    jmp     .fb_unsafe
+
+.fb_ok:
+    inc     rsi
+    jmp     .fb_loop
+
+.fb_done:
+    test    ecx, ecx
+    jz      .fb_unsafe                  ; must contain dot in filename
 .path_safe:
-    ; Path is safe, clear carry flag and return
     clc
+    ret
+
+.fb_unsafe:
+    stc
     ret
 
 
@@ -806,4 +862,72 @@ find_body:
     sub     rdx, rcx
     sub     rdx, 4 ; rdx is now the length of the body
     clc ; Clear carry flag to indicate success
+    ret
+
+_ensure_body_loaded:
+    push rbx
+    ; Try with what we have
+    call    find_body
+    jnc     .check_len
+    ; If not found, read more a few times
+    xor     rbx, rbx
+.el_try_again:
+    mov     rax, 2048
+    sub     rax, r15
+    cmp     rax, 0
+    je      .fail
+    mov     rax, SYSCALL_READ
+    mov     rdi, r13
+    lea     rsi, [request_buffer + r15]
+    mov     rdx, 2048
+    sub     rdx, r15
+    syscall
+    cmp     rax, 0
+    jle     .fail
+    add     r15, rax
+    call    find_body
+    jnc     .check_len
+    inc     rbx
+    cmp     rbx, 8
+    jl      .el_try_again
+    jmp     .fail
+
+.check_len:
+    push    rsi
+    push    rdx
+    lea     rdi, [rel clen_key]
+    lea     rsi, [request_buffer]
+    call    find_header_value
+    jc      .done_len
+    call    parse_int
+    mov     r10, rax
+    pop     rdx
+    pop     rsi
+.more_body:
+    cmp     rdx, r10
+    jae     .done_len
+    mov     rax, 2048
+    sub     rax, r15
+    cmp     rax, 0
+    je      .fail
+    mov     rax, SYSCALL_READ
+    mov     rdi, r13
+    lea     rsi, [request_buffer + r15]
+    mov     rdx, 2048
+    sub     rdx, r15
+    syscall
+    cmp     rax, 0
+    jle     .fail
+    add     r15, rax
+    call    find_body
+    jc      .fail
+    jmp     .more_body
+
+.done_len:
+    clc
+    pop     rbx
+    ret
+.fail:
+    stc
+    pop     rbx
     ret
