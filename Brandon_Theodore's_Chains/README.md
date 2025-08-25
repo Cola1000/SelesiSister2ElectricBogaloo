@@ -1,3 +1,5 @@
+# IT'S NOT DONE YET
+
 # Cara cepat menjalankan (ringkas)
 
 1. Buat venv & install deps:
