@@ -158,3 +158,14 @@ File untuk deployment sederhana telah disediakan di dalam direktori `deploy/`.
 ### Update (v2)
 - Fix route `/hello` checked **before** static path parsing so it always returns dynamic HTML.
 - Make body parsing for **POST/PUT** robust against different newline styles (CRLF / LF).
+
+
+### Implemented routes in this build
+- `/` → serves `www/index.html`
+- `/hello` → dynamic HTML from assembly
+- `/auth` → HTTP Basic (admin/secret). Returns 401 with `WWW-Authenticate` if missing/invalid; returns 200 + small body if OK.
+- `/dyn/hello` → text/plain response from dynamic route
+- `/dyn/add?a=2&b=40` → JSON `{"a":2,"b":40,"sum":42}`
+- `POST /www/post_result.txt` → writes body
+- `PUT /<path>` → creates/replaces file under `www/` (fixed leading slash handling)
+- `DELETE /<path>` → removes file under `www/`
