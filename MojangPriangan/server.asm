@@ -55,7 +55,7 @@ section .data
     len_405         equ $ - http_405
 
 ; Simple dynamic HTML body for /hello
-hello_body      db '<!doctype html><html><body><h1>Hello from x86-64 asm \\o/</h1></body></html>'
+hello_body      db '<!doctype html><html><body><h1>Why is this shit harder than I thought HOLY SHIEET!!</h1></body></html>'
 len_hello_body  equ $ - hello_body
 
 
@@ -145,51 +145,46 @@ _start:
 ; --- Handlers ---
 .handle_get:
     lea     rsi, [request_buffer + 4] ; Path starts after "GET "
-    lea     rdi, [path_buffer]
-    call    parse_path_get
 
-    ; --- Simple routing: /hello returns dynamic HTML ---
-    ; r13 = client_fd
-    ; rsi points to path (request_buffer + 4)
+    ; --- Simple routing: /hello returns dynamic HTML (checked before static path parsing) ---
     push    rsi
     mov     rbx, rsi
-    ; check for "/hello"
     cmp     byte [rbx], '/'
-    jne     .route_not_hello
+    jne     .route_skip_hello
     cmp     byte [rbx+1], 'h'
-    jne     .route_not_hello
+    jne     .route_skip_hello
     cmp     byte [rbx+2], 'e'
-    jne     .route_not_hello
+    jne     .route_skip_hello
     cmp     byte [rbx+3], 'l'
-    jne     .route_not_hello
+    jne     .route_skip_hello
     cmp     byte [rbx+4], 'l'
-    jne     .route_not_hello
+    jne     .route_skip_hello
     cmp     byte [rbx+5], 'o'
-    jne     .route_not_hello
-    ; trailing char must be space or '?' (end of path or start of query)
+    jne     .route_skip_hello
     mov     al, byte [rbx+6]
     cmp     al, ' '
-    je      .send_hello
+    je      .route_send_hello
     cmp     al, '?'
-    jne     .route_not_hello
-.send_hello:
-    ; send header
+    jne     .route_skip_hello
+.route_send_hello:
     mov     rax, SYSCALL_WRITE
     mov     rdi, r13
     mov     rsi, http_200
     mov     rdx, len_200
     syscall
-    ; send body
+
     mov     rax, SYSCALL_WRITE
     mov     rdi, r13
     mov     rsi, hello_body
     mov     rdx, len_hello_body
     syscall
+
     pop     rsi
     jmp     .close_and_exit
-.route_not_hello:
+.route_skip_hello:
     pop     rsi
-
+    lea     rdi, [path_buffer]
+    call    parse_path_get
     lea     rdi, [path_buffer] ; RDI now holds the full, safe path to open
     jmp     .serve_file
 
@@ -367,20 +362,57 @@ build_full_path:
     clc
     ret
 
+
 find_body:
-    ; Finds the start of the HTTP body (after CRLFCRLF)
+    ; Finds the start of the HTTP body by scanning for CRLFCRLF ("").
     ; Input: r15 = request length
-    ; Output: rsi = pointer to body, rdx = body length, carry flag set on error
+    ; Output: rsi = pointer to body, rdx = body length, CF=0 on success, CF=1 on error
     xor     rcx, rcx
-.find_loop:
-    mov     eax, [request_buffer + rcx]
-    cmp     eax, 0x0A0D0A0D ; CRLFCRLF
-    je      .found_body
-    inc     rcx
+.fb_loop:
     cmp     rcx, r15
-    jle     .find_loop
-    stc ; Set carry flag to indicate error (body not found)
+    jae     .fb_error
+    mov     al, byte [request_buffer + rcx]
+    cmp     al, 13
+    jne     .fb_next
+    cmp     byte [request_buffer + rcx + 1], 10
+    jne     .fb_next
+    cmp     byte [request_buffer + rcx + 2], 13
+    jne     .fb_next
+    cmp     byte [request_buffer + rcx + 3], 10
+    jne     .fb_next
+    lea     rsi, [request_buffer + rcx + 4]
+    mov     rdx, r15
+    sub     rdx, rcx
+    sub     rdx, 4
+    clc
     ret
+.fb_next:
+    inc     rcx
+    jmp     .fb_loop
+
+.fb_error:
+    xor     rcx, rcx
+.fb2_loop:
+    cmp     rcx, r15
+    jae     .fb_fail
+    cmp     byte [request_buffer + rcx], 10
+    jne     .fb2_next
+    cmp     byte [request_buffer + rcx + 1], 10
+    jne     .fb2_next
+    lea     rsi, [request_buffer + rcx + 2]
+    mov     rdx, r15
+    sub     rdx, rcx
+    sub     rdx, 2
+    clc
+    ret
+.fb2_next:
+    inc     rcx
+    jmp     .fb2_loop
+
+.fb_fail:
+    stc
+    ret
+
 .found_body:
     lea     rsi, [request_buffer + rcx + 4] ; Body starts after the separator
     mov     rdx, r15
