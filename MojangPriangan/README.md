@@ -119,12 +119,12 @@ curl -v 'http://127.0.0.1:8080/dyn/add?a=2&b=40' --output -
 **Screenshot Logging:**
 ![Another_One](gambar/image2.png)
 
-<!-- ### 3\. [EKSPERIMEN] Deployment
+### 3\. [EKSPERIMEN] Deployment
 
 File untuk deployment sederhana telah disediakan di dalam direktori `deploy/`.
 
   - **`asm-httpd.service`**: Sebuah file unit `systemd` untuk menjalankan server sebagai layanan di latar belakang.
-  - **`nginx.conf.example`**: Contoh konfigurasi NGINX untuk digunakan sebagai *reverse proxy* di depan server Assembly. Ini adalah praktik standar untuk deployment, memungkinkan NGINX menangani traffic HTTPS, kompresi, dan lainnya. -->
+  - **`nginx.conf.example`**: Contoh konfigurasi NGINX untuk digunakan sebagai *reverse proxy* di depan server Assembly. Ini adalah praktik standar untuk deployment, memungkinkan NGINX menangani traffic HTTPS, kompresi, dan lainnya.
 
 -----
 

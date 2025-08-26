@@ -1,13 +1,33 @@
-# deploy/asm-httpd.service
 [Unit]
-Description=asmhttpd (NASM) demo
+Description=Assembly HTTP Server
 After=network.target
+Wants=network.target
 
 [Service]
-ExecStart=/opt/asmhttpd/asmhttpd -p 8080 -d /opt/asmhttpd/www
+Type=forking
 User=www-data
-Restart=always
-AmbientCapabilities=CAP_NET_BIND_SERVICE
+Group=www-data
+WorkingDirectory=/opt/asm-httpd
+ExecStartPre=/bin/mkdir -p /opt/asm-httpd/www
+ExecStart=/opt/asm-httpd/httpd
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=mixed
+Restart=on-failure
+RestartSec=5s
+
+# Security settings
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/asm-httpd
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+# Resource limits  
+LimitNOFILE=65536
+LimitNPROC=4096
 
 [Install]
 WantedBy=multi-user.target

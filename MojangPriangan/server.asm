@@ -335,34 +335,17 @@ _start:
     cmp     byte [rbx+8], '?'
     jne     .route_dynadd_skip
 
-    ; Parse query
-    lea     rsi, [rbx+9]       ; after "add?"
-    ; a=
-    cmp     byte [rsi], 'a'
-    jne     .route_dynadd_skip
-    inc     rsi
-    cmp     byte [rsi], '='
-    jne     .route_dynadd_skip
-    inc     rsi
-    call    parse_int
-    mov     r8, rax            ; a
-
-    ; find b=
-.da_seek_b:
-    cmp     byte [rsi], 'b'
-    je      .da_b_eq
-    cmp     byte [rsi], 0
-    je      .route_dynadd_skip
-    inc     rsi
-    jmp     .da_seek_b
-
-.da_b_eq:
-    inc     rsi
-    cmp     byte [rsi], '='
-    jne     .route_dynadd_skip
-    inc     rsi
-    call    parse_int
-    mov     r9, rax            ; b
+    ; Parse query string - find 'a=' parameter
+    lea     rsi, [rbx+9]       ; start after "add?"
+    call    find_param_a
+    jc      .route_dynadd_skip ; 'a' parameter not found
+    mov     r8, rax            ; store value of 'a'
+    
+    ; Find 'b=' parameter
+    lea     rsi, [rbx+9]       ; restart from beginning of query
+    call    find_param_b
+    jc      .route_dynadd_skip ; 'b' parameter not found
+    mov     r9, rax            ; store value of 'b'
 
     ; sum = a + b
     mov     rax, r8
@@ -631,7 +614,7 @@ _start:
     jmp     .send_response
 
 .handle_delete:
-    lea     rsi, [request_buffer + 7] ;
+    lea     rsi, [request_buffer + 7]
     lea     rdi, [path_buffer]
     call    parse_path_write
     jc      .handle_400 
@@ -703,19 +686,80 @@ find_header_value:
     pop rbx
     ret
 
+find_param_a:
+    push    rbx
+    push    rcx
+    mov     rbx, rsi
+.fpa_loop:
+    mov     al, byte [rbx]
+    cmp     al, 0
+    je      .fpa_fail
+    cmp     al, ' '
+    je      .fpa_fail
+    cmp     al, 'a'
+    jne     .fpa_next
+    cmp     byte [rbx+1], '='
+    je      .fpa_found
+.fpa_next:
+    inc     rbx
+    jmp     .fpa_loop
+.fpa_found:
+    lea     rsi, [rbx+2]    ; point after 'a='
+    call    parse_int
+    clc
+    pop     rcx
+    pop     rbx
+    ret
+.fpa_fail:
+    stc
+    pop     rcx
+    pop     rbx
+    ret
+
+find_param_b:
+    push    rbx
+    push    rcx
+    mov     rbx, rsi
+.fpb_loop:
+    mov     al, byte [rbx]
+    cmp     al, 0
+    je      .fpb_fail
+    cmp     al, ' '
+    je      .fpb_fail
+    cmp     al, 'b'
+    jne     .fpb_next
+    cmp     byte [rbx+1], '='
+    je      .fpb_found
+.fpb_next:
+    inc     rbx
+    jmp     .fpb_loop
+.fpb_found:
+    lea     rsi, [rbx+2]    ; point after 'b='
+    call    parse_int
+    clc
+    pop     rcx
+    pop     rbx
+    ret
+.fpb_fail:
+    stc
+    pop     rcx
+    pop     rbx
+    ret
+
 parse_int:
-    xor rax, rax
+    xor     rax, rax
+    xor     rbx, rbx
 .pi_loop:
-    mov bl, byte [rsi]
-    cmp bl, '0'
-    jb .pi_end
-    cmp bl, '9'
-    ja .pi_end
-    imul rax, rax, 10
-    sub bl, '0'
-    add rax, rbx
-    inc rsi
-    jmp .pi_loop
+    mov     bl, byte [rsi]
+    cmp     bl, '0'
+    jb      .pi_end
+    cmp     bl, '9'
+    ja      .pi_end
+    imul    rax, rax, 10
+    sub     bl, '0'
+    add     rax, rbx
+    inc     rsi
+    jmp     .pi_loop
 .pi_end:
     ret
 
@@ -751,7 +795,9 @@ u64_to_dec:
     pop     rax
     ret
 
-
+; Determine Content-Type based on file extension
+; Input: rdi = path (null-terminated)
+; Output: rsi = content-type header, rdx = header length
 get_content_type:
     push    rdi
     push    rbx
@@ -852,6 +898,7 @@ parse_path_write:
     ret
 
 build_full_path:
+
     push    rsi                         ; keep original
     push    rdi                         ; keep destination
     
@@ -892,7 +939,9 @@ build_full_path:
     test    rax, rax
     jne     .path_safe                  
 
-    lea     rsi, [rdi + len_www_prefix - 1]  
+    ; Assembly fallback: allow [A-Za-z0-9._-] only, require at least one '.',
+    ; and no extra '/' after "www/"
+    lea     rsi, [rdi + len_www_prefix - 1]  ; point after "www/"
     xor     ecx, ecx                    ; seen_dot = 0
 .fb_loop:
     mov     al, [rsi]
