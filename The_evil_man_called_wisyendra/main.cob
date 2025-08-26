@@ -49,9 +49,27 @@ IDENTIFICATION DIVISION.
        77 IDR-FMT                   PIC Z(15).99.
        77 IDR-TEXT                  PIC X(60).
 
+*> --- Interest ---
+77 CMD-LINE                 PIC X(256) VALUE SPACES.
+77 ARG-COUNT                PIC 9(4)   VALUE 0.
+77 APPLY-COUNT              PIC 9(4)   VALUE 0.
+77 INTEREST-FOUND           PIC 9(4)   VALUE 0.
+77 INTEREST-RATE            PIC 9V9999 VALUE 0.0010.
+77 I-ACC                    PIC 9(6).
+77 I-AMT                    PIC 9(6)V99.
+
+
        PROCEDURE DIVISION.
 
        MAIN.
+
+ACCEPT CMD-LINE FROM COMMAND-LINE
+MOVE 0 TO INTEREST-FOUND
+INSPECT CMD-LINE TALLYING INTEREST-FOUND FOR ALL "-apply-interest"
+IF INTEREST-FOUND > 0
+    PERFORM INTEREST-SERVICE
+    STOP RUN
+END-IF
            PERFORM READ-INPUT
            PERFORM PROCESS-RECORDS
            IF MATCH-FOUND = "N"
@@ -162,6 +180,37 @@ IDENTIFICATION DIVISION.
            OPEN OUTPUT OUT-FILE
            WRITE OUT-RECORD
            CLOSE OUT-FILE.
+
+       
+
+INTEREST-SERVICE.
+    DISPLAY "Starting interest service (every 23s). Rate: " INTEREST-RATE
+    PERFORM WITH TEST AFTER UNTIL 1 = 2
+        PERFORM APPLY-INTEREST-TO-ALL
+        CALL "SYSTEM" USING "sleep 23"
+    END-PERFORM.
+
+APPLY-INTEREST-TO-ALL.
+    OPEN INPUT  ACC-FILE
+    OPEN OUTPUT TMP-FILE
+    PERFORM UNTIL 1 = 2
+        READ ACC-FILE
+            AT END
+                EXIT PERFORM
+            NOT AT END
+                MOVE ACC-RECORD-RAW(1:6)                 TO I-ACC
+                MOVE FUNCTION NUMVAL(ACC-RECORD-RAW(10:9)) TO I-AMT
+                COMPUTE TMP-BALANCE ROUNDED = I-AMT + (I-AMT * INTEREST-RATE)
+                MOVE I-ACC              TO TMP-RECORD(1:6)
+                MOVE "BAL"              TO TMP-RECORD(7:3)
+                MOVE TMP-BALANCE        TO FORMATTED-AMOUNT
+                MOVE FORMATTED-AMOUNT   TO TMP-RECORD(10:9)
+                WRITE TMP-RECORD
+        END-READ
+    END-PERFORM
+    CLOSE ACC-FILE
+    CLOSE TMP-FILE
+    CALL "SYSTEM" USING "mv temp.txt accounts.txt".
 
        FINALIZE.
            IF UPDATED = "Y"
