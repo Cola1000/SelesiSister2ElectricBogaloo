@@ -54,7 +54,7 @@ IDENTIFICATION DIVISION.
 77 ARG-COUNT                PIC 9(4)   VALUE 0.
 77 APPLY-COUNT              PIC 9(4)   VALUE 0.
 77 INTEREST-FOUND           PIC 9(4)   VALUE 0.
-77 INTEREST-RATE            PIC 9V9999 VALUE 0.0010.
+77 INTEREST-RATE            PIC 9V9999 VALUE 0.10.
 77 I-ACC                    PIC 9(6).
 77 I-AMT                    PIC 9(6)V99.
 
