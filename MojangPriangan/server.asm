@@ -2,6 +2,8 @@
 %define SYSCALL_WRITE       1
 %define SYSCALL_OPEN        2
 %define SYSCALL_CLOSE       3
+%define SYSCALL_FSTAT       5
+%define SYSCALL_SENDFILE    40
 %define SYSCALL_SOCKET      41
 %define SYSCALL_ACCEPT      43
 %define SYSCALL_BIND        49
@@ -32,7 +34,28 @@ section .data
     www_prefix      db 'www/', 0
     len_www_prefix  equ $ - www_prefix
 
-    ; HTTP Responses
+    ; HTTP Responses (without Content-Type to allow custom headers)
+    http_200_start  db 'HTTP/1.1 200 OK', 13, 10
+    len_200_start   equ $ - http_200_start
+    
+    content_length_hdr db 'Content-Length: '
+    len_content_length equ $ - content_length_hdr
+    
+    content_type_html db 'Content-Type: text/html', 13, 10, 13, 10
+    len_content_type_html equ $ - content_type_html
+    
+    content_type_css  db 'Content-Type: text/css', 13, 10, 13, 10  
+    len_content_type_css equ $ - content_type_css
+    
+    content_type_js   db 'Content-Type: application/javascript', 13, 10, 13, 10
+    len_content_type_js equ $ - content_type_js
+    
+    content_type_plain db 'Content-Type: text/plain', 13, 10, 13, 10
+    len_content_type_plain equ $ - content_type_plain
+    
+    crlf              db 13, 10
+    
+    ; Legacy response for compatibility
     http_200        db 'HTTP/1.1 200 OK', 13, 10, 'Content-Type: text/html', 13, 10, 13, 10
     len_200         equ $ - http_200
 
@@ -85,6 +108,8 @@ section .bss
     request_buffer  resb 2048
     file_buffer     resb 8192
     path_buffer     resb 256
+    stat_buffer     resb 144    ; struct stat buffer (144 bytes on x86_64)
+    content_len_str resb 32     ; buffer for Content-Length header value
 
 section .text
 global _start
@@ -97,12 +122,12 @@ _start:
     mov     rsi, SOCK_STREAM
     xor     rdx, rdx
     syscall
-    mov     r12, rax
+    mov     r12, rax ; Save server_fd in r12
 
     ; --- Prepare and Bind Address ---
     mov     word [sockaddr_in], AF_INET
-    mov     word [sockaddr_in+2], 0x901F
-    mov     dword [sockaddr_in+4], 0      
+    mov     word [sockaddr_in+2], 0x901F ; Port 8080, big-endian
+    mov     dword [sockaddr_in+4], 0      ; Bind to any IP
     mov     rax, SYSCALL_BIND
     mov     rdi, r12
     mov     rsi, sockaddr_in
@@ -112,7 +137,7 @@ _start:
     ; --- Listen for Connections ---
     mov     rax, SYSCALL_LISTEN
     mov     rdi, r12
-    mov     rsi, 10 
+    mov     rsi, 10 ; Backlog
     syscall
 
 .accept_loop:
@@ -121,7 +146,7 @@ _start:
     xor     rsi, rsi
     xor     rdx, rdx
     syscall
-    mov     r13, rax 
+    mov     r13, rax ; Save client_fd in r13
 
     ; --- Fork for Concurrency ---
     mov     rax, SYSCALL_FORK
@@ -131,13 +156,13 @@ _start:
 
 .parent_process:
     mov     rax, SYSCALL_CLOSE
-    mov     rdi, r13 
+    mov     rdi, r13 ; Close client_fd in parent
     syscall
     jmp     .accept_loop
 
 .child_process:
     mov     rax, SYSCALL_CLOSE
-    mov     rdi, r12 
+    mov     rdi, r12 ; Close server_fd in child
     syscall
 
     ; --- Read request from client ---
@@ -180,6 +205,7 @@ _start:
     jne     .route_auth_skip
     cmp     byte [rbx+4], 'h'
     jne     .route_auth_skip
+    ; next must be space or '?' (end of path)
     mov     al, byte [rbx+5]
     cmp     al, ' '
     je      .route_auth_handle
@@ -351,7 +377,7 @@ _start:
     mov     byte [rdi+4], ':'
     lea     rsi, [rdi+5]
     mov     rbx, r8
-    call    u32_to_dec
+    call    u64_to_dec
     mov     byte [rsi], ','
     inc     rsi
     mov     byte [rsi], '"'
@@ -363,7 +389,7 @@ _start:
     mov     byte [rsi], ':'
     inc     rsi
     mov     rbx, r9
-    call    u32_to_dec
+    call    u64_to_dec
     mov     byte [rsi], ','
     inc     rsi
     mov     byte [rsi], '"'
@@ -379,7 +405,7 @@ _start:
     mov     byte [rsi], ':'
     inc     rsi
     mov     rbx, rax
-    call    u32_to_dec
+    call    u64_to_dec
     mov     byte [rsi], '}'
     inc     rsi
     mov     byte [rsi], 10
@@ -407,7 +433,7 @@ _start:
     pop     rsi
 
 
-    ; --- Simple routing: /hello returns dynamic HTML 
+    ; --- Simple routing: /hello returns dynamic HTML (checked before static path parsing) ---
     push    rsi
     mov     rbx, rsi
     cmp     byte [rbx], '/'
@@ -447,10 +473,11 @@ _start:
 
     lea     rdi, [path_buffer]
     call    parse_path_get
-    lea     rdi, [path_buffer]
+    lea     rdi, [path_buffer] ; RDI now holds the full, safe path to open
     jmp     .serve_file
 
 .serve_file:
+    ; Open the file
     mov     rax, SYSCALL_OPEN
     mov     rsi, O_RDONLY
     xor     rdx, rdx
@@ -458,26 +485,77 @@ _start:
     cmp     rax, 0
     jl      .handle_404
     mov     r14, rax ; Save file_fd
-    mov     rax, SYSCALL_READ
+
+    ; Get file stats using fstat
+    mov     rax, SYSCALL_FSTAT
     mov     rdi, r14
-    mov     rsi, file_buffer
-    mov     rdx, 8192
+    mov     rsi, stat_buffer
     syscall
-    mov     r15, rax ; Save file length
+    cmp     rax, 0
+    jl      .close_file_and_404
+    
+    ; Extract file size from stat buffer (offset 48 in struct stat)
+    mov     r15, qword [stat_buffer + 48]  ; st_size is at offset 48
+    
+    ; Send HTTP 200 status line
+    mov     rax, SYSCALL_WRITE
+    mov     rdi, r13
+    mov     rsi, http_200_start
+    mov     rdx, len_200_start
+    syscall
+    
+    ; Send Content-Length header
+    mov     rax, SYSCALL_WRITE  
+    mov     rdi, r13
+    mov     rsi, content_length_hdr
+    mov     rdx, len_content_length
+    syscall
+    
+    ; Convert file size to string and send it
+    mov     rbx, r15                    ; file size
+    mov     rsi, content_len_str
+    call    u64_to_dec
+    mov     rdx, rsi
+    sub     rdx, content_len_str        ; length of number string
+    mov     rax, SYSCALL_WRITE
+    mov     rdi, r13
+    mov     rsi, content_len_str
+    syscall
+    
+    ; Send CRLF after Content-Length
+    mov     rax, SYSCALL_WRITE
+    mov     rdi, r13
+    mov     rsi, crlf
+    mov     rdx, 2
+    syscall
+    
+    ; Determine and send Content-Type based on file extension
+    lea     rdi, [path_buffer]
+    call    get_content_type
+    mov     rax, SYSCALL_WRITE
+    mov     rdi, r13
+    ; rsi and rdx already set by get_content_type
+    syscall
+    
+    ; Use sendfile for efficient file transfer
+    mov     rax, SYSCALL_SENDFILE
+    mov     rdi, r13        ; out_fd (socket)
+    mov     rsi, r14        ; in_fd (file)
+    xor     rdx, rdx        ; offset (NULL = start from current position)
+    mov     r10, r15        ; count (file size)
+    syscall
+    
+    ; Close the file
     mov     rax, SYSCALL_CLOSE
     mov     rdi, r14
     syscall
-    mov     rax, SYSCALL_WRITE
-    mov     rdi, r13
-    mov     rsi, http_200
-    mov     rdx, len_200
-    syscall
-    mov     rax, SYSCALL_WRITE
-    mov     rdi, r13
-    mov     rsi, file_buffer
-    mov     rdx, r15
-    syscall
     jmp     .close_and_exit
+
+.close_file_and_404:
+    mov     rax, SYSCALL_CLOSE
+    mov     rdi, r14
+    syscall
+    jmp     .handle_404
 
 .handle_post:
     ; parse target path after "POST "
@@ -553,10 +631,10 @@ _start:
     jmp     .send_response
 
 .handle_delete:
-    lea     rsi, [request_buffer + 7]
+    lea     rsi, [request_buffer + 7] ;
     lea     rdi, [path_buffer]
     call    parse_path_write
-    jc      .handle_400
+    jc      .handle_400 
     mov     rax, SYSCALL_UNLINK
     lea     rdi, [path_buffer]
     syscall
@@ -641,35 +719,109 @@ parse_int:
 .pi_end:
     ret
 
-; write RBX as decimal at RSI, advance RSI
-u32_to_dec:
-    push rax
-    push rcx
-    push rdx
-    push rdi
-    mov  rdi, rsi
-    mov  rcx, 0
-.ud_divloop:
-    xor  rdx, rdx
-    mov  rax, rbx
-    mov  r8, 10
-    div  r8
-    add  dl, '0'
-    push rdx
-    inc  rcx
-    mov  rbx, rax
-    test rbx, rbx
-    jnz  .ud_divloop
-.ud_out:
-    pop  rdx
-    mov  byte [rdi], dl
-    inc  rdi
-    loop .ud_out
-    mov  rsi, rdi
-    pop  rdi
-    pop  rdx
-    pop  rcx
-    pop  rax
+u64_to_dec:
+    push    rax
+    push    rcx
+    push    rdx
+    push    rdi
+    push    r8
+    mov     rdi, rsi
+    mov     rcx, 0
+    mov     r8, 10
+.ud64_divloop:
+    xor     rdx, rdx
+    mov     rax, rbx
+    div     r8
+    add     dl, '0'
+    push    rdx
+    inc     rcx
+    mov     rbx, rax
+    test    rbx, rbx
+    jnz     .ud64_divloop
+.ud64_out:
+    pop     rdx
+    mov     byte [rdi], dl
+    inc     rdi
+    loop    .ud64_out
+    mov     rsi, rdi
+    pop     r8
+    pop     rdi
+    pop     rdx
+    pop     rcx
+    pop     rax
+    ret
+
+
+get_content_type:
+    push    rdi
+    push    rbx
+    
+    ; Find the last dot in the path
+    mov     rbx, rdi
+    xor     rcx, rcx        ; position of last dot
+.gct_find_dot:
+    mov     al, byte [rdi]
+    test    al, al
+    je      .gct_check_ext
+    cmp     al, '.'
+    jne     .gct_next
+    mov     rcx, rdi        ; save position of dot
+.gct_next:
+    inc     rdi
+    jmp     .gct_find_dot
+
+.gct_check_ext:
+    test    rcx, rcx
+    je      .gct_default    ; no dot found
+    inc     rcx             ; point to character after dot
+    
+    ; Check for .css
+    cmp     byte [rcx], 'c'
+    jne     .gct_check_js
+    cmp     byte [rcx+1], 's'
+    jne     .gct_check_js
+    cmp     byte [rcx+2], 's'
+    jne     .gct_check_js
+    cmp     byte [rcx+3], 0
+    jne     .gct_check_js
+    mov     rsi, content_type_css
+    mov     rdx, len_content_type_css
+    jmp     .gct_done
+
+.gct_check_js:
+    ; Check for .js
+    cmp     byte [rcx], 'j'
+    jne     .gct_check_txt
+    cmp     byte [rcx+1], 's'
+    jne     .gct_check_txt
+    cmp     byte [rcx+2], 0
+    jne     .gct_check_txt
+    mov     rsi, content_type_js
+    mov     rdx, len_content_type_js
+    jmp     .gct_done
+
+.gct_check_txt:
+    ; Check for .txt
+    cmp     byte [rcx], 't'
+    jne     .gct_default
+    cmp     byte [rcx+1], 'x'
+    jne     .gct_default
+    cmp     byte [rcx+2], 't'
+    jne     .gct_default
+    cmp     byte [rcx+3], 0
+    jne     .gct_default
+    mov     rsi, content_type_plain
+    mov     rdx, len_content_type_plain
+    jmp     .gct_done
+
+.gct_default:
+    ; Default to text/html for .html or unknown extensions
+    mov     rsi, content_type_html
+    mov     rdx, len_content_type_html
+
+.gct_done:
+    pop     rbx
+    pop     rdi
     ret
 
 parse_path_get:
@@ -680,7 +832,7 @@ parse_path_get:
     inc     rsi
 .not_root:
     call    build_full_path
-    jc      .path_is_root
+    jc      .path_is_root ; If unsafe, also serve root as a safe default
     ret
 .path_is_root:
     mov     rdi, path_buffer
@@ -700,8 +852,8 @@ parse_path_write:
     ret
 
 build_full_path:
-    push    rsi                         
-    push    rdi                         
+    push    rsi                         ; keep original
+    push    rdi                         ; keep destination
     
     ; Copy "www/" prefix
     mov     rcx, len_www_prefix - 1     ; exclude null terminator
@@ -740,7 +892,7 @@ build_full_path:
     test    rax, rax
     jne     .path_safe                  
 
-    lea     rsi, [rdi + len_www_prefix - 1]  ;
+    lea     rsi, [rdi + len_www_prefix - 1]  
     xor     ecx, ecx                    ; seen_dot = 0
 .fb_loop:
     mov     al, [rsi]
@@ -860,6 +1012,8 @@ find_body:
     jmp     .fb2_loop
 
 .fb_fail:
+    ; If no separator found, assume entire buffer after first line is body
+    ; Find first LF and use that as separator
     xor     rcx, rcx
 .fb_simple:
     cmp     rcx, r15

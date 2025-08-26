@@ -59,7 +59,7 @@ curl -v -X POST --data "TONIGHT THE MUSIC SING SO LOUD!" http://127.0.0.1:8080/t
 ```
 Note: Bisa lihat hasil post di directory www/
 
-<!-- ### 4\. Melayani Permintaan File Statis
+### 4\. Melayani Permintaan File Statis
 
 Server dapat menyajikan file dari direktori lokal yang ditentukan menggunakan argumen `-d`. Ini memungkinkan server untuk mengirimkan file HTML, CSS, JavaScript, gambar, dan lainnya.
 
@@ -71,7 +71,7 @@ Server dapat menyajikan file dari direktori lokal yang ditentukan menggunakan ar
 4.  Syscall `sendfile()` yang sangat efisien digunakan untuk menyalin data dari file descriptor file langsung ke file descriptor socket, menghindari penyalinan data yang tidak perlu ke *user space*.
 
 **Screenshot Pengujian:**
-![]()-->
+![]()
 
 ### 5\. Melayani Permintaan Berdasarkan Rute/Path (Routing)
 
