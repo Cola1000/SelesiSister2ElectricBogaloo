@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: banking-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: banking-app
+  template:
+    metadata:
+      labels:
+        app: banking-app
+    spec:
+      containers:
+      - name: banking
+        image: YOUR_DOCKERHUB_USERNAME/banking:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8000
+        env:
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        # Optional: mount a writable volume to persist account changes across pod restarts
+        volumeMounts:
+        - name: accounts-vol
+          mountPath: /app
+          subPath: ""   # mount over /app to allow writes (image must not be read-only)
+      volumes:
+      - name: accounts-vol
+        emptyDir: {}

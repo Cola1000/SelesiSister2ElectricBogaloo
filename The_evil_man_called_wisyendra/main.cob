@@ -1,10 +1,11 @@
-       IDENTIFICATION DIVISION.
+IDENTIFICATION DIVISION.
        PROGRAM-ID. BANKING.
 
        ENVIRONMENT DIVISION.
        INPUT-OUTPUT SECTION.
        FILE-CONTROL.
-           SELECT IN-FILE ASSIGN TO "input.txt".
+           SELECT IN-FILE ASSIGN TO "input.txt"
+               ORGANIZATION IS LINE SEQUENTIAL.
            SELECT ACC-FILE ASSIGN TO "accounts.txt"
                ORGANIZATION IS LINE SEQUENTIAL.
            SELECT TMP-FILE ASSIGN TO "temp.txt"
@@ -14,36 +15,39 @@
 
        DATA DIVISION.
        FILE SECTION.
-
        FD IN-FILE.
-       01 IN-RECORD             PIC X(15).
+       01 IN-RECORD                 PIC X(18).
 
        FD ACC-FILE.
-       01 ACC-RECORD-RAW        PIC X(15).
+       01 ACC-RECORD-RAW            PIC X(18).
 
        FD TMP-FILE.
-       01 TMP-RECORD            PIC X(15).
+       01 TMP-RECORD                PIC X(18).
 
        FD OUT-FILE.
-       01 OUT-RECORD            PIC X(80).
+       01 OUT-RECORD                PIC X(200).
 
        WORKING-STORAGE SECTION.
-       77 IN-ACCOUNT            PIC 9(6).
-       77 IN-ACTION             PIC X(3).
-       77 IN-AMOUNT             PIC 9(6)V99.
+       77 IN-ACCOUNT                PIC 9(6).
+       77 IN-ACTION                 PIC X(3).
+       77 IN-AMOUNT                 PIC 9(6)V99.
 
-       77 ACC-ACCOUNT           PIC 9(6).
-       77 ACC-ACTION            PIC X(3).
-       77 ACC-BALANCE           PIC 9(6)V99.
+       77 ACC-ACCOUNT               PIC 9(6).
+       77 ACC-BALANCE               PIC 9(6)V99.
 
-       77 TMP-BALANCE           PIC 9(6)V99.
-       77 MATCH-FOUND           PIC X VALUE "N".
-       77 UPDATED               PIC X VALUE "N".
+       77 TMP-BALANCE               PIC 9(6)V99.
+       77 MATCH-FOUND               PIC X VALUE "N".
+       77 UPDATED                   PIC X VALUE "N".
 
-       77 FORMATTED-AMOUNT      PIC 9(6).99.
-       77 BALANCE-TEXT          PIC X(20).
+       77 FORMATTED-AMOUNT          PIC 9(6).99.
+       77 BALANCE-TEXT              PIC X(20).
+       77 BALANCE-ALPHA             PIC X(15).
 
-       77 BALANCE-ALPHA         PIC X(15).
+       *> --- Currency conversion (Rai -> IDR) ---
+       77 RAI-TO-IDR                PIC 9(9)   VALUE 119714660.
+       77 IDR-AMOUNT                PIC 9(15)V99.
+       77 IDR-FMT                   PIC Z(15).99.
+       77 IDR-TEXT                  PIC X(60).
 
        PROCEDURE DIVISION.
 
@@ -58,86 +62,108 @@
                    MOVE "ACCOUNT NOT FOUND" TO OUT-RECORD
                END-IF
            END-IF
+           PERFORM WRITE-OUTPUT
            PERFORM FINALIZE
            STOP RUN.
 
        READ-INPUT.
            OPEN INPUT IN-FILE
            READ IN-FILE AT END
-               DISPLAY "NO INPUT"
+               MOVE "NO INPUT" TO OUT-RECORD
+               PERFORM WRITE-OUTPUT
                STOP RUN
            END-READ
            CLOSE IN-FILE
 
-           MOVE IN-RECORD(1:6) TO IN-ACCOUNT
-           MOVE IN-RECORD(7:3) TO IN-ACTION
+           MOVE IN-RECORD(1:6)  TO IN-ACCOUNT
+           MOVE IN-RECORD(7:3)  TO IN-ACTION
            MOVE FUNCTION NUMVAL(IN-RECORD(10:9)) TO IN-AMOUNT.
 
        PROCESS-RECORDS.
-           OPEN INPUT ACC-FILE
+           OPEN INPUT  ACC-FILE
            OPEN OUTPUT TMP-FILE
-           PERFORM UNTIL MATCH-FOUND = "Y"
+           PERFORM UNTIL 1 = 2
                READ ACC-FILE
                    AT END
                        EXIT PERFORM
                    NOT AT END
                        MOVE ACC-RECORD-RAW(1:6) TO ACC-ACCOUNT
-                       MOVE FUNCTION NUMVAL(ACC-RECORD-RAW(10:9))
-                           TO ACC-BALANCE
+                       MOVE FUNCTION NUMVAL(ACC-RECORD-RAW(10:9)) TO ACC-BALANCE
                        IF ACC-ACCOUNT = IN-ACCOUNT
                            MOVE "Y" TO MATCH-FOUND
                            PERFORM APPLY-ACTION
                        ELSE
                            WRITE TMP-RECORD FROM ACC-RECORD-RAW
                        END-IF
+               END-READ
            END-PERFORM
            CLOSE ACC-FILE
            CLOSE TMP-FILE.
-
 
        APPLY-ACTION.
            MOVE ACC-BALANCE TO TMP-BALANCE
            EVALUATE IN-ACTION
                WHEN "DEP"
-                   SUBTRACT IN-AMOUNT FROM TMP-BALANCE
-                   MOVE "DEPOSITED MONEY" TO OUT-RECORD
-               WHEN "WDR"
                    ADD IN-AMOUNT TO TMP-BALANCE
-                   MOVE "WITHDREW MONEY" TO OUT-RECORD
+                   PERFORM WRITE-UPDATED-RECORD
+                   MOVE "DEPOSIT OK. NEW BALANCE: " TO BALANCE-TEXT
+                   PERFORM BUILD-OUT-RECORD
+                   MOVE "Y" TO UPDATED
+               WHEN "WDR"
+                   IF IN-AMOUNT > TMP-BALANCE
+                       MOVE "INSUFFICIENT FUNDS. CURRENT BALANCE: " TO BALANCE-TEXT
+                       MOVE ACC-BALANCE TO TMP-BALANCE
+                       PERFORM BUILD-OUT-RECORD
+                   ELSE
+                       SUBTRACT IN-AMOUNT FROM TMP-BALANCE
+                       PERFORM WRITE-UPDATED-RECORD
+                       MOVE "WITHDRAWAL OK. NEW BALANCE: " TO BALANCE-TEXT
+                       PERFORM BUILD-OUT-RECORD
+                       MOVE "Y" TO UPDATED
+                   END-IF
                WHEN "BAL"
-                   MOVE SPACES TO OUT-RECORD
                    MOVE "BALANCE: " TO BALANCE-TEXT
-                   MOVE TMP-BALANCE TO FORMATTED-AMOUNT
-                   MOVE FORMATTED-AMOUNT TO BALANCE-ALPHA
-                   STRING BALANCE-TEXT DELIMITED SIZE
-                          BALANCE-ALPHA DELIMITED SIZE
-                          INTO OUT-RECORD
+                   PERFORM BUILD-OUT-RECORD
                WHEN OTHER
                    MOVE "UNKNOWN ACTION" TO OUT-RECORD
-           END-EVALUATE
+           END-EVALUATE.
 
-           MOVE IN-ACCOUNT TO TMP-RECORD(1:5)
-           MOVE IN-ACTION  TO TMP-RECORD(6:3)
-           MOVE TMP-BALANCE TO FORMATTED-AMOUNT
-           MOVE FORMATTED-AMOUNT TO TMP-RECORD(11:9)
+       WRITE-UPDATED-RECORD.
+           MOVE ACC-ACCOUNT      TO TMP-RECORD(1:6)
+           MOVE "BAL"            TO TMP-RECORD(7:3)
+           MOVE TMP-BALANCE      TO FORMATTED-AMOUNT
+           MOVE FORMATTED-AMOUNT TO TMP-RECORD(10:9)
+           WRITE TMP-RECORD.
 
-           WRITE TMP-RECORD
-           MOVE "Y" TO UPDATED.
+       BUILD-OUT-RECORD.
+           MOVE SPACES TO OUT-RECORD
+           MOVE TMP-BALANCE      TO FORMATTED-AMOUNT
+           MOVE FORMATTED-AMOUNT TO BALANCE-ALPHA
+           *> Compute IDR
+           COMPUTE IDR-AMOUNT = TMP-BALANCE * RAI-TO-IDR
+           MOVE IDR-AMOUNT TO IDR-FMT
+           MOVE " | ≈ IDR Rp " TO IDR-TEXT(1:12)
+           MOVE IDR-FMT         TO IDR-TEXT(13:17)
+           STRING BALANCE-TEXT  DELIMITED SIZE
+                  BALANCE-ALPHA DELIMITED SIZE
+                  IDR-TEXT      DELIMITED SIZE
+                  INTO OUT-RECORD.
 
        APPEND-ACCOUNT.
            OPEN EXTEND ACC-FILE
-           MOVE IN-ACCOUNT TO ACC-RECORD-RAW(1:5)
-           MOVE IN-ACTION  TO ACC-RECORD-RAW(6:3)
-           MOVE IN-AMOUNT TO FORMATTED-AMOUNT
-           MOVE FORMATTED-AMOUNT TO ACC-RECORD-RAW(11:9)
-
+           MOVE IN-ACCOUNT       TO ACC-RECORD-RAW(1:6)
+           MOVE "BAL"            TO ACC-RECORD-RAW(7:3)
+           MOVE IN-AMOUNT        TO FORMATTED-AMOUNT
+           MOVE FORMATTED-AMOUNT TO ACC-RECORD-RAW(10:9)
            WRITE ACC-RECORD-RAW
            CLOSE ACC-FILE.
+
+       WRITE-OUTPUT.
+           OPEN OUTPUT OUT-FILE
+           WRITE OUT-RECORD
+           CLOSE OUT-FILE.
 
        FINALIZE.
            IF UPDATED = "Y"
                CALL "SYSTEM" USING "mv temp.txt accounts.txt"
-           END-IF
-           OPEN OUTPUT OUT-FILE
-           CLOSE OUT-FILE.
-
+           END-IF.
