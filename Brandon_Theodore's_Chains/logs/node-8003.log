@@ -1,0 +1,16 @@
+INFO:     Started server process [5996]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8003 (Press CTRL+C to quit)
+Starting Bitcoin Node node-8003 on port 8003
+Difficulty: 4
+INFO:     127.0.0.1:60762 - "POST /nodes/register HTTP/1.1" 200 OK
+Mining block 1 with difficulty 4...
+Nonce: 10000
+Nonce: 20000
+Block mined! Nonce: 24490, Time: 1.26s
+Failed to broadcast to http://localhost:8001: timed out
+Failed to broadcast to http://localhost:8002: timed out
+INFO:     127.0.0.1:49230 - "GET /mine?miner=Miner1&reward=12.5 HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for background tasks to complete. (CTRL+C to force quit)
