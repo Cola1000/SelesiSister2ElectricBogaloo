@@ -1,16 +1,34 @@
-INFO:     Started server process [5996]
+INFO:     Started server process [8956]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
 INFO:     Uvicorn running on http://0.0.0.0:8003 (Press CTRL+C to quit)
 Starting Bitcoin Node node-8003 on port 8003
 Difficulty: 4
-INFO:     127.0.0.1:60762 - "POST /nodes/register HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53944 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36652 - "POST /nodes/register HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36658 - "POST /transaction HTTP/1.1" 201 Created
+INFO:     127.0.0.1:36656 - "POST /transaction HTTP/1.1" 201 Created
+INFO:     127.0.0.1:36682 - "POST /transaction HTTP/1.1" 201 Created
+INFO:     127.0.0.1:36674 - "POST /transaction HTTP/1.1" 201 Created
 Mining block 1 with difficulty 4...
 Nonce: 10000
 Nonce: 20000
-Block mined! Nonce: 24490, Time: 1.26s
-Failed to broadcast to http://localhost:8001: timed out
-Failed to broadcast to http://localhost:8002: timed out
-INFO:     127.0.0.1:49230 - "GET /mine?miner=Miner1&reward=12.5 HTTP/1.1" 200 OK
-INFO:     Shutting down
-INFO:     Waiting for background tasks to complete. (CTRL+C to force quit)
+Nonce: 30000
+Nonce: 40000
+Nonce: 50000
+Nonce: 60000
+Nonce: 70000
+Nonce: 80000
+Nonce: 90000
+Nonce: 100000
+Nonce: 110000
+Nonce: 120000
+Block mined! Nonce: 128253, Time: 1.77s
+INFO:     127.0.0.1:36694 - "GET /mine?miner=Miner1&reward=12.5&difficulty=4 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36698 - "GET /chain HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36706 - "GET /chain HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36720 - "GET /chain HTTP/1.1" 200 OK
+Resolving conflicts... Current chain length: 2
+Peer http://localhost:8001 chain length: 2
+Peer http://localhost:8002 chain length: 2
+INFO:     127.0.0.1:36734 - "GET /resolve HTTP/1.1" 200 OK

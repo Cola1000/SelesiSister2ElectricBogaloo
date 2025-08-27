@@ -1,14 +1,24 @@
-INFO:     Started server process [5987]
+INFO:     Started server process [8881]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
 INFO:     Uvicorn running on http://0.0.0.0:8001 (Press CTRL+C to quit)
 Starting Bitcoin Node node-8001 on port 8001
 Difficulty: 4
-INFO:     127.0.0.1:43848 - "POST /nodes/register HTTP/1.1" 200 OK
-INFO:     127.0.0.1:41976 - "POST /transaction HTTP/1.1" 201 Created
-INFO:     127.0.0.1:51494 - "POST /transaction HTTP/1.1" 201 Created
+INFO:     127.0.0.1:53376 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57504 - "POST /nodes/register HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57520 - "POST /transaction HTTP/1.1" 201 Created
+INFO:     127.0.0.1:57528 - "POST /transaction HTTP/1.1" 201 Created
+INFO:     127.0.0.1:57516 - "POST /transaction HTTP/1.1" 201 Created
+INFO:     127.0.0.1:57552 - "POST /transaction HTTP/1.1" 201 Created
+INFO:     127.0.0.1:57556 - "POST /transaction HTTP/1.1" 201 Created
+INFO:     127.0.0.1:57544 - "POST /transaction HTTP/1.1" 201 Created
 Received block 1 from peer
 Block 1 accepted
-INFO:     127.0.0.1:34110 - "GET /chain HTTP/1.1" 200 OK
-INFO:     Shutting down
-INFO:     Waiting for connections to close. (CTRL+C to force quit)
+INFO:     127.0.0.1:57568 - "POST /block HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57572 - "GET /chain HTTP/1.1" 200 OK
+Resolving conflicts... Current chain length: 2
+Peer http://localhost:8003 chain length: 2
+Peer http://localhost:8002 chain length: 2
+INFO:     127.0.0.1:57588 - "GET /resolve HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57594 - "GET /chain HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57600 - "GET /chain HTTP/1.1" 200 OK

@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-"""
-Mini Bitcoin Network - Complete Implementation
-Run multiple nodes locally with different ports
-"""
-
 from __future__ import annotations
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -133,6 +128,7 @@ class NodeState:
         return self.chain[-1]
 
 # Global state
+_mempool_keys: Set[str] = set()
 state = NodeState()
 
 # FastAPI app
@@ -182,36 +178,34 @@ def tx_pool():
     }
 
 @app.post("/transaction", status_code=201)
+@app.post("/transaction", status_code=201)
 def new_transaction(tx: Transaction):
-    """Add new transaction to mempool"""
-    # Basic validation
     if tx.amount <= 0:
         raise HTTPException(400, "Amount must be positive")
     if tx.sender == tx.recipient:
         raise HTTPException(400, "Sender and recipient cannot be the same")
-    
-    state.mempool.append(tx.dict())
-    
-    # Broadcast transaction to peers
-    for peer in list(state.peers):
-        try:
-            with httpx.Client(timeout=3.0) as client:
-                client.post(f"{peer}/transaction", json=tx.dict())
-        except Exception:
-            pass  # Ignore failed broadcasts
-    
-    return {
-        "message": "transaction queued",
-        "pool_size": len(state.mempool)
-    }
+
+    key = json.dumps(tx.dict(), sort_keys=True)
+    if key not in _mempool_keys:
+        _mempool_keys.add(key)
+        state.mempool.append(tx.dict())
+
+        for peer in list(state.peers):
+            try:
+                with httpx.Client(timeout=3.0) as client:
+                    client.post(f"{peer}/transaction", json=tx.dict())
+            except Exception:
+                pass
+
+    return {"message": "transaction queued", "pool_size": len(state.mempool)}
 
 @app.get("/chain")
-def full_chain():
-    """Get full blockchain"""
-    return {
-        "length": len(state.chain),
-        "chain": [b.dict() for b in state.chain]
-    }
+def full_chain(summary: bool=False):
+    if summary:
+        return {"length": len(state.chain),
+                "last": state.chain[-1].dict() if state.chain else None}
+    return {"length": len(state.chain),
+            "chain": [b.dict() for b in state.chain]}
 
 @app.get("/mine")
 def mine(miner: Optional[str] = None, reward: float = 0.0, difficulty: Optional[int] = None):
