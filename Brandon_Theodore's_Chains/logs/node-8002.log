@@ -1,23 +1,26 @@
-INFO:     Started server process [8915]
+INFO:     Started server process [42692]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
 INFO:     Uvicorn running on http://0.0.0.0:8002 (Press CTRL+C to quit)
 Starting Bitcoin Node node-8002 on port 8002
 Difficulty: 4
-INFO:     127.0.0.1:34562 - "GET /health HTTP/1.1" 200 OK
-INFO:     127.0.0.1:42454 - "POST /nodes/register HTTP/1.1" 200 OK
-INFO:     127.0.0.1:42464 - "POST /transaction HTTP/1.1" 201 Created
-INFO:     127.0.0.1:42476 - "POST /transaction HTTP/1.1" 201 Created
-INFO:     127.0.0.1:42488 - "POST /transaction HTTP/1.1" 201 Created
-INFO:     127.0.0.1:42498 - "POST /transaction HTTP/1.1" 201 Created
+INFO:     127.0.0.1:59620 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59626 - "POST /nodes/register HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33828 - "POST /transaction HTTP/1.1" 201 Created
+INFO:     127.0.0.1:33834 - "POST /transaction HTTP/1.1" 201 Created
+INFO:     127.0.0.1:33840 - "POST /transaction HTTP/1.1" 201 Created
+INFO:     127.0.0.1:33856 - "POST /transaction HTTP/1.1" 201 Created
 Received block 1 from peer
 Block 1 accepted
-INFO:     127.0.0.1:42500 - "POST /block HTTP/1.1" 200 OK
-INFO:     127.0.0.1:42514 - "GET /chain HTTP/1.1" 200 OK
-INFO:     127.0.0.1:42528 - "GET /chain HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33872 - "POST /block HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33888 - "GET /chain HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33890 - "GET /chain HTTP/1.1" 200 OK
 Resolving conflicts... Current chain length: 2
 Peer http://localhost:8003 chain length: 2
 Peer http://localhost:8001 chain length: 2
-INFO:     127.0.0.1:42538 - "GET /resolve HTTP/1.1" 200 OK
-INFO:     127.0.0.1:42552 - "GET /chain HTTP/1.1" 200 OK
-INFO:     127.0.0.1:48998 - "GET /chain HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33906 - "GET /resolve HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33922 - "GET /chain HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [42692]

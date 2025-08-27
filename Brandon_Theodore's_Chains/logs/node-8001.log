@@ -1,29 +1,32 @@
-INFO:     Started server process [8881]
+INFO:     Started server process [42660]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
 INFO:     Uvicorn running on http://0.0.0.0:8001 (Press CTRL+C to quit)
 Starting Bitcoin Node node-8001 on port 8001
 Difficulty: 4
-INFO:     127.0.0.1:53376 - "GET /health HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57504 - "POST /nodes/register HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57520 - "POST /transaction HTTP/1.1" 201 Created
-INFO:     127.0.0.1:57528 - "POST /transaction HTTP/1.1" 201 Created
-INFO:     127.0.0.1:57516 - "POST /transaction HTTP/1.1" 201 Created
-INFO:     127.0.0.1:57552 - "POST /transaction HTTP/1.1" 201 Created
-INFO:     127.0.0.1:57556 - "POST /transaction HTTP/1.1" 201 Created
-INFO:     127.0.0.1:57544 - "POST /transaction HTTP/1.1" 201 Created
+INFO:     127.0.0.1:60030 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60042 - "POST /nodes/register HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42076 - "POST /transaction HTTP/1.1" 201 Created
+INFO:     127.0.0.1:42086 - "POST /transaction HTTP/1.1" 201 Created
+INFO:     127.0.0.1:42074 - "POST /transaction HTTP/1.1" 201 Created
+INFO:     127.0.0.1:42106 - "POST /transaction HTTP/1.1" 201 Created
+INFO:     127.0.0.1:42120 - "POST /transaction HTTP/1.1" 201 Created
+INFO:     127.0.0.1:42102 - "POST /transaction HTTP/1.1" 201 Created
 Received block 1 from peer
 Block 1 accepted
-INFO:     127.0.0.1:57568 - "POST /block HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57572 - "GET /chain HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42124 - "POST /block HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42140 - "GET /chain HTTP/1.1" 200 OK
 Resolving conflicts... Current chain length: 2
 Peer http://localhost:8003 chain length: 2
 Peer http://localhost:8002 chain length: 2
-INFO:     127.0.0.1:57588 - "GET /resolve HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57594 - "GET /chain HTTP/1.1" 200 OK
-INFO:     127.0.0.1:57600 - "GET /chain HTTP/1.1" 200 OK
-INFO:     127.0.0.1:42174 - "GET /chain?summary=1 HTTP/1.1" 200 OK
-Resolving conflicts... Current chain length: 2
-Peer http://localhost:8003 chain length: 2
-Peer http://localhost:8002 chain length: 2
-INFO:     127.0.0.1:60902 - "GET /resolve HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42156 - "GET /resolve HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42166 - "GET /chain HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42176 - "GET /chain HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45564 - "GET /chain?summary=1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56470 - "GET /chain?summary=1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55902 - "GET /chain?summary=1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53062 - "GET /chain?summary=1 HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [42660]
