@@ -22,3 +22,8 @@ Peer http://localhost:8002 chain length: 2
 INFO:     127.0.0.1:57588 - "GET /resolve HTTP/1.1" 200 OK
 INFO:     127.0.0.1:57594 - "GET /chain HTTP/1.1" 200 OK
 INFO:     127.0.0.1:57600 - "GET /chain HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42174 - "GET /chain?summary=1 HTTP/1.1" 200 OK
+Resolving conflicts... Current chain length: 2
+Peer http://localhost:8003 chain length: 2
+Peer http://localhost:8002 chain length: 2
+INFO:     127.0.0.1:60902 - "GET /resolve HTTP/1.1" 200 OK
