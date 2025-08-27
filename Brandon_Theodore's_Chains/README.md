@@ -2,6 +2,8 @@
 
 CHAINSS~~ FREAKY~~!!!
 
+> [Video demo](https://drive.google.com/file/d/1Q4ZzUZC0OyTdJdK8pmwEzwcjlSQMnRdt/view?usp=sharing)
+
 ## Features
 - Block: index, timestamp, transactions, previous_hash, nonce, difficulty, merkle_root, hash (SHA-256)
 - Transaction mempool; optional coinbase on mining
